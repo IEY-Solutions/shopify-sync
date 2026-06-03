@@ -1,0 +1,64 @@
+name: Sync stock Contabilium -> Shopify
+
+# Corre el sync INCREMENTAL en la nube, gratis (repo publico).
+# - schedule: cada 5 min (minimo de GitHub; puede atrasarse segun su carga).
+# - workflow_dispatch: permite correrlo a mano desde la pestana "Actions".
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# No arrancar una corrida nueva si la anterior sigue en curso (anti-solapamiento).
+concurrency:
+  group: sync-stock
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # La PRIMERA corrida no tiene "libreta" -> hace un sync completo (~26 min) y la
+    # siembra. Las siguientes son incrementales (~1 min). Por eso damos 30 min.
+    timeout-minutes: 30
+    steps:
+      - name: Traer el codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Recuperar la "libreta" (.cache/last-sync.json + sku-map.json) de la corrida
+      # anterior. La key incluye run_id (unica), y restore-keys baja la mas reciente.
+      - name: Restaurar estado (cache)
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: sync-state-${{ github.run_id }}
+          restore-keys: |
+            sync-state-
+
+      - name: Correr sync incremental
+        run: node src/index.js
+        env:
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+          SHOPIFY_API_VERSION: ${{ secrets.SHOPIFY_API_VERSION }}
+          SHOPIFY_DOT_LOCATION_ID: ${{ secrets.SHOPIFY_DOT_LOCATION_ID }}
+          CONTABILIUM_API_URL: ${{ secrets.CONTABILIUM_API_URL }}
+          CONTABILIUM_CLIENT_ID: ${{ secrets.CONTABILIUM_CLIENT_ID }}
+          CONTABILIUM_CLIENT_SECRET: ${{ secrets.CONTABILIUM_CLIENT_SECRET }}
+          CONTABILIUM_DOT_DEPOSITO_ID: ${{ secrets.CONTABILIUM_DOT_DEPOSITO_ID }}
+          DRY_RUN: "false"
+
+      # Guardar la libreta actualizada para la proxima corrida (siempre, aun si fallo).
+      - name: Guardar estado (cache)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: sync-state-${{ github.run_id }}
