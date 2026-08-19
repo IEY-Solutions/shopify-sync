@@ -3,9 +3,12 @@
 Middleware que sincroniza el stock del depósito **LOCAL DOT BAIRES** de Contabilium (`127356`)
 hacia la location **IEY Shopping Dot Baires** de Shopify (`gid://shopify/Location/83342655574`).
 
-> **Estado (2026-08-19):** el sync **funciona y está convergido**. Corre sólo por disparo manual;
-> falta el token del disparador externo. La spec v2 del rediseño está escrita y pendiente de
-> SPEC_CHALLENGE 02.
+> **Estado (2026-08-19):** el sync **funciona y está convergido**. El disparador externo
+> (cron-job.org `7733389`) quedó configurado para correr **cada 30 min** en modo incremental
+> escribiendo de verdad, con aviso por mail ante fallo; falta **sólo reemplazar su token**, que es
+> un PAT fine-grained emitido para el dueño anterior del repo y devuelve 403.
+> Ver [`specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md`](specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md).
+> La spec v2 del rediseño está escrita y pendiente de SPEC_CHALLENGE 02.
 
 > **Nota:** `iey-ai › evidence/` significa
 > `~/iey/iey-ai/docs/specs/dot-stock-sync/evidence/`. La evidencia con datos de negocio vive en el
@@ -20,6 +23,7 @@ hacia la location **IEY Shopping Dot Baires** de Shopify (`gid://shopify/Locatio
 | Saber qué está decidido y no volver a preguntarlo | `iey-ai › evidence/p0-decisiones.md` |
 | Ver el estado y qué falta para que corra solo | `iey-ai › evidence/p0-proximos-pasos.md` |
 | Retomar el trabajo en una sesión nueva | [`PROMPT-SESION-LIMPIA.md`](PROMPT-SESION-LIMPIA.md) |
+| Saber qué de la doc quedó vencido | [`specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md`](specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md) |
 | El contrato del rediseño | [`specs/001-dot-stock-sync/`](specs/001-dot-stock-sync/README.md) |
 
 ## Mapa
@@ -38,7 +42,8 @@ docs/
 │       ├── acceptance.md            ← 24 criterios, trazados al challenger
 │       └── findings/
 │           ├── README.md            ← dónde está la evidencia y por qué no acá
-│           └── spec-challenge-01.md ← el challenge de la v1 (26 hallazgos)
+│           ├── spec-challenge-01.md ← el challenge de la v1 (26 hallazgos)
+│           └── coherencia-2026-08-19.md ← afirmaciones vencidas, con su refutación
 ├── project/                         ← contexto del dominio (scaffold)
 └── ai/knowledge/                    ← guías transversales (scaffold)
 ```

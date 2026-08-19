@@ -12,6 +12,7 @@
 import "dotenv/config"; // carga las variables del .env (requisito 2)
 import cron from "node-cron";
 import { syncUnSku, syncTodos } from "./sync.js";
+import { evaluarCorrida, UMBRAL_ERROR_DEFECTO } from "./resultado.js";
 
 // --- Parseo simple de argumentos de linea de comandos ---
 const args = process.argv.slice(2);
@@ -76,30 +77,15 @@ else if (esCron) {
 
 // --- Modo 3: sync una sola vez (incremental por default, completo con --full) ---
 else {
-  // Umbral de fallo: por encima de esta fraccion de SKUs con error, la corrida
-  // NO puede terminar en verde. El modo de falla real de este sistema no es el
-  // error ruidoso, es el tilde verde vacio: el 2026-06-03 y otra vez el
-  // 2026-08-19 una corrida reporto 2.4k errores, 0 sincronizados y exit 0.
-  const UMBRAL_ERROR = Number(process.env.UMBRAL_ERROR ?? "0.05");
+  // El guardarrail vive en resultado.js para poder testearlo sin ejecutar este
+  // archivo (que corre al importarse). Ver test/resultado.test.js.
+  const UMBRAL_ERROR = Number(process.env.UMBRAL_ERROR ?? String(UMBRAL_ERROR_DEFECTO));
 
   syncTodos({ full: esFull })
     .then((r) => {
-      if (!r || !r.total) return;
-      const tasaError = r.error / r.total;
-      const efectivos = r.actualizado + r.sin_cambios + r.dry + r.saltado;
-
-      if (tasaError > UMBRAL_ERROR) {
-        console.error(
-          `[FALLO] ${r.error} de ${r.total} SKUs con error ` +
-            `(${(tasaError * 100).toFixed(1)}% > umbral ${(UMBRAL_ERROR * 100).toFixed(1)}%).`
-        );
-        process.exit(1);
-      }
-      if (efectivos === 0) {
-        console.error(
-          `[FALLO] la corrida no sincronizo ni verifico ningun SKU de ${r.total}. ` +
-            `Una corrida vacia no es una corrida exitosa.`
-        );
+      const veredicto = evaluarCorrida(r, UMBRAL_ERROR);
+      if (!veredicto.ok) {
+        console.error(`[FALLO] ${veredicto.motivo}`);
         process.exit(1);
       }
     })

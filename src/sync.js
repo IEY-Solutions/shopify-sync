@@ -33,13 +33,22 @@ function esDryRun() {
 //       'no_activado'. Esos SKUs quedan salteados por el atajo del incremental
 //       ANTES de llegar al codigo que los desanotaria, asi que no se reintentan
 //       nunca. La unica forma de recuperarlos es descartar la libreta una vez.
-const SNAPSHOT_VERSION = 2;
+export const SNAPSHOT_VERSION = 2;
 
-function cargarSnapshot() {
+// Decide si una libreta ya parseada sirve. Separada de la IO para poder
+// testearla sin tocar el disco (test/libreta.test.js).
+//   - devuelve el mapa de SKUs si la libreta esta vigente
+//   - devuelve null si hay que DESCARTARLA y re-sembrar
+export function parsearLibreta(crudo) {
+  if (crudo && crudo.__v === SNAPSHOT_VERSION && crudo.skus) return crudo.skus;
+  return null;
+}
+
+export function cargarSnapshot(ruta = SNAPSHOT_PATH) {
   try {
-    if (!existsSync(SNAPSHOT_PATH)) return {};
-    const crudo = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf-8"));
-    if (crudo && crudo.__v === SNAPSHOT_VERSION && crudo.skus) return crudo.skus;
+    if (!existsSync(ruta)) return {};
+    const skus = parsearLibreta(JSON.parse(readFileSync(ruta, "utf-8")));
+    if (skus) return skus;
     console.warn(
       "[libreta] formato viejo o envenenado por H5: se descarta y se re-siembra " +
         "(esta corrida no escribe nada nuevo por eso, solo re-verifica contra Shopify)."
@@ -51,11 +60,19 @@ function cargarSnapshot() {
   return {};
 }
 
-function guardarSnapshot(snap) {
-  mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
+export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH) {
+  // H3: en un runner limpio .cache/ no existe y writeFileSync tira ENOENT.
+  mkdirSync(dirname(ruta), { recursive: true });
   const payload = { __v: SNAPSHOT_VERSION, skus: snap };
-  writeFileSync(SNAPSHOT_PATH, JSON.stringify(payload, null, 2), "utf-8");
+  writeFileSync(ruta, JSON.stringify(payload, null, 2), "utf-8");
 }
+
+// Cada cuantos SKUs procesados se persiste la libreta a mitad de corrida.
+// Antes se persistia UNA sola vez, al final: un fallo a los 7 minutos tiraba los
+// 7 minutos y la corrida siguiente volvia a empezar de cero. El paso de cache de
+// GitHub Actions corre con `if: always()`, asi que levanta el checkpoint aunque
+// el job muera por timeout. ~13 escrituras en una corrida completa de 2.562.
+const CHECKPOINT_CADA = 200;
 
 // -----------------------------------------------------------------------------
 // procesarSku — sincroniza UN solo SKU contra Shopify
@@ -182,6 +199,10 @@ export async function syncTodos({ full = false } = {}) {
     saltado: 0, // incremental: sin cambios desde la ultima vez (no se consulto Shopify)
   };
 
+  // Cuenta solo los SKUs que realmente pasaron por Shopify: los salteados por el
+  // atajo del incremental no cambian la libreta, asi que no ameritan checkpoint.
+  let procesados = 0;
+
   for (const [sku, cantidad] of stock) {
     // Atajo del incremental: si la libreta ya dice este valor, no tocamos Shopify.
     if (!full && snapshotPrevio[sku] === cantidad) {
@@ -203,6 +224,15 @@ export async function syncTodos({ full = false } = {}) {
       // Si estaba anotado de una corrida vieja (libreta envenenada por H5),
       // lo sacamos para que vuelva a intentarse en la proxima pasada.
       delete snapshotNuevo[sku];
+    }
+
+    // Checkpoint: la libreta parcial es segura porque solo anota lo que quedo
+    // CONFIRMADO en Shopify, asi que lo unico que provoca es que la corrida
+    // siguiente vuelva a verificar el resto.
+    procesados++;
+    if (!esDryRun() && procesados % CHECKPOINT_CADA === 0) {
+      guardarSnapshot(snapshotNuevo);
+      console.log(`  [checkpoint] libreta persistida tras ${procesados} SKUs procesados`);
     }
   }
 
