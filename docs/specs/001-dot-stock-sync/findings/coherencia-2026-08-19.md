@@ -38,6 +38,22 @@ token, no la cuenta.
 → **Consecuencia:** D-08 y AC-19 dejan de estar bloqueados por permisos. El bloqueo real es un
 token que hay que reemplazar.
 
+**Y ese reemplazo tiene su propia compuerta.** `IEY-Solutions` exige aprobación de la organización
+para PATs fine-grained: el formulario ofrece *"Generate token and request access"*, no
+*"Generate token"*. El token nuevo (`cron-job.org - disparo sync stock DOT`, sólo este repositorio,
+`Actions: Read and write` + `Metadata: Read-only`, vence el 2027-08-20) quedó creado en estado
+**Pending**. Y quien lo pidió no puede aprobarlo:
+
+```
+$ gh api user/memberships/orgs/IEY-Solutions --jq '{role,state}'
+{"role":"member","state":"active"}
+```
+
+Aprobar un pedido de PAT fine-grained requiere ser **owner** de la organización. Es decir: el sync
+automático depende hoy de una persona con rol de owner, no de nada técnico. La alternativa —un PAT
+clásico con scopes `repo` + `workflow`— no necesita aprobación de la org, pero da acceso a **todos**
+los repositorios del usuario y queda guardado en un tercero.
+
 ## C-02 — "`verify.sh` todavía no corre `npm test`" — **falso**
 
 `p0-proximos-pasos.md` §"Deuda conocida" ítem 3.

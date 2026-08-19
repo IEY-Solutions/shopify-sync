@@ -5,8 +5,11 @@ hacia la location **IEY Shopping Dot Baires** de Shopify (`gid://shopify/Locatio
 
 > **Estado (2026-08-19):** el sync **funciona y está convergido**. El disparador externo
 > (cron-job.org `7733389`) quedó configurado para correr **cada 30 min** en modo incremental
-> escribiendo de verdad, con aviso por mail ante fallo; falta **sólo reemplazar su token**, que es
-> un PAT fine-grained emitido para el dueño anterior del repo y devuelve 403.
+> escribiendo de verdad, con aviso por mail ante fallo, pero sigue **deshabilitado**: espera un
+> token válido. El PAT nuevo (fine-grained, sólo este repo, `Actions: Read and write`, vence el
+> **2027-08-20**) está creado y **pendiente de aprobación de un owner de `IEY-Solutions`** —
+> `federico0330` es `member`, no `owner`, así que no puede aprobarlo. Hasta entonces el sync se
+> dispara a mano.
 > Ver [`specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md`](specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md).
 > La spec v2 del rediseño está escrita y pendiente de SPEC_CHALLENGE 02.
 
