@@ -25,9 +25,14 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # La PRIMERA corrida no tiene "libreta" -> hace un sync completo (~26 min) y la
-    # siembra. Las siguientes son incrementales (~1 min). Por eso damos 30 min.
-    timeout-minutes: 30
+    # La PRIMERA corrida no tiene "libreta" -> resuelve los 2562 SKUs contra
+    # Shopify (~26 min) y la siembra. Las siguientes son incrementales (~1 min).
+    #
+    # 50 y no 30: la libreta se persiste RECIEN AL FINAL de syncTodos. Si el job
+    # muere por timeout antes de eso, la corrida siguiente vuelve a empezar de
+    # cero y el ciclo no cierra nunca (agravante de H3 en el diagnostico).
+    # El margen se saca cuando el trabajo sea reanudable por checkpoint.
+    timeout-minutes: 50
     steps:
       - name: Traer el codigo
         uses: actions/checkout@v4
