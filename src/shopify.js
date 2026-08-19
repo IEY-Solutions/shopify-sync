@@ -9,7 +9,7 @@
 // Scopes del token: read_products, read_inventory, write_inventory.
 // -----------------------------------------------------------------------------
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -38,6 +38,10 @@ function cargarCache() {
 }
 
 function guardarCache() {
+  // H3: en un runner limpio .cache/ no existe y writeFileSync tira ENOENT. Esa
+  // excepcion se propagaba hasta procesarSku, que la reportaba como "fallo al
+  // consultar Shopify" y dejaba la corrida en verde con 0 SKUs sincronizados.
+  mkdirSync(dirname(CACHE_PATH), { recursive: true });
   writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
 }
 
@@ -194,9 +198,16 @@ async function shopifyGraphQL(query, variables) {
 // - inventoryItemId: el GID del inventory item (se cachea).
 // - available: stock actual en la location DOT (sirve como compareQuantity).
 //              Es null si el item NO esta activado en esa location.
+// H4: el campo `sku` de Shopify es TOKENIZADO con coincidencia parcial, y 671 de
+// los 2562 SKUs del deposito (26,2%) son prefijo estricto de otro. Con
+// `first: 1` y sin comillas, `sku:IEY-103-NEGRO` puede devolver
+// IEY-103-NEGRO-INCLUIDO y escribir el stock en la variante equivocada.
+// Defensa en tres capas: comillas, first > 1, y verificacion del sku devuelto.
+const CANDIDATOS_POR_SKU = 10;
+
 const QUERY_POR_SKU = `
-  query GetVariantBySku($query: String!, $locationId: ID!) {
-    productVariants(first: 1, query: $query) {
+  query GetVariantBySku($query: String!, $locationId: ID!, $first: Int!) {
+    productVariants(first: $first, query: $query) {
       edges {
         node {
           id
@@ -216,15 +227,41 @@ const QUERY_POR_SKU = `
   }
 `;
 
+// Escapa el valor para meterlo entre comillas en la search syntax de Shopify.
+function escaparValorBusqueda(v) {
+  return String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export class SkuAmbiguoError extends Error {
+  constructor(sku, cantidad) {
+    super(`SKU ambiguo: ${cantidad} variantes de Shopify tienen el sku exacto "${sku}"`);
+    this.name = "SkuAmbiguoError";
+    this.sku = sku;
+  }
+}
+
 export async function buscarVariantePorSku(sku) {
   const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
   const data = await shopifyGraphQL(QUERY_POR_SKU, {
-    query: `sku:${sku}`,
+    query: `sku:"${escaparValorBusqueda(sku)}"`,
     locationId,
+    first: CANDIDATOS_POR_SKU,
   });
 
-  const node = data?.productVariants?.edges?.[0]?.node;
-  if (!node) return null; // SKU no encontrado en Shopify
+  const edges = data?.productVariants?.edges ?? [];
+
+  // Aun con comillas, Shopify puede devolver coincidencias parciales: filtramos
+  // por igualdad EXACTA del sku antes de usar cualquier resultado.
+  const exactos = edges.map((e) => e?.node).filter((n) => n && n.sku === sku);
+
+  if (exactos.length === 0) return null; // SKU no encontrado en Shopify
+  if (exactos.length > 1) {
+    // Shopify no impone unicidad de sku. Escribir en "la primera" seria elegir
+    // al azar: preferimos no escribir (regla: ante incertidumbre, no pisar).
+    throw new SkuAmbiguoError(sku, exactos.length);
+  }
+
+  const node = exactos[0];
 
   const inventoryItemId = node.inventoryItem?.id;
   if (!inventoryItemId) return null;

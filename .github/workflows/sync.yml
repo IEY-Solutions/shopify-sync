@@ -7,6 +7,12 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "true = simula y NO escribe en Shopify (recomendado para validar)"
+        type: choice
+        options: ["true", "false"]
+        default: "true"
 
 # No arrancar una corrida nueva si la anterior sigue en curso (anti-solapamiento).
 concurrency:
@@ -53,7 +59,9 @@ jobs:
           CONTABILIUM_CLIENT_ID: ${{ secrets.CONTABILIUM_CLIENT_ID }}
           CONTABILIUM_CLIENT_SECRET: ${{ secrets.CONTABILIUM_CLIENT_SECRET }}
           CONTABILIUM_DOT_DEPOSITO_ID: ${{ secrets.CONTABILIUM_DOT_DEPOSITO_ID }}
-          DRY_RUN: "false"
+          # En schedule no hay inputs -> cae a "false" (comportamiento historico).
+          # En workflow_dispatch se elige, y por defecto simula.
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
 
       # Guardar la libreta actualizada para la proxima corrida (siempre, aun si fallo).
       - name: Guardar estado (cache)

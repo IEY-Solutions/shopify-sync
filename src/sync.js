@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { getStockDeposito } from "./contabilium.js";
-import { resolverSku, setearStock } from "./shopify.js";
+import { resolverSku, setearStock, SkuAmbiguoError } from "./shopify.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // "Libreta" de lo ultimo que confirmamos en Shopify por cada SKU.
@@ -53,6 +53,11 @@ async function procesarSku(sku, stockObjetivo) {
   try {
     info = await resolverSku(sku);
   } catch (err) {
+    // H4: mas de una variante con el sku exacto. Elegir una seria elegir al azar.
+    if (err instanceof SkuAmbiguoError) {
+      console.warn(`  [SKIP] ${sku}: ${err.message} -> no se escribe`);
+      return "ambiguo";
+    }
     console.error(`  [ERROR] ${sku}: fallo al consultar Shopify -> ${err.message}`);
     return "error";
   }
@@ -157,6 +162,7 @@ export async function syncTodos({ full = false } = {}) {
     no_encontrado: 0,
     no_activado: 0,
     error: 0,
+    ambiguo: 0,
     saltado: 0, // incremental: sin cambios desde la ultima vez (no se consulto Shopify)
   };
 
@@ -170,16 +176,17 @@ export async function syncTodos({ full = false } = {}) {
     const resultado = await procesarSku(sku, cantidad);
     contadores[resultado] = (contadores[resultado] ?? 0) + 1;
 
-    // Anotar en la libreta los estados "resueltos" (ya no hay nada que hacer a
-    // este valor de Contabilium). NO anotamos 'error' (para reintentarlo) ni
-    // 'dry' (porque en simulacion no escribimos nada).
-    if (
-      resultado === "actualizado" ||
-      resultado === "sin_cambios" ||
-      resultado === "no_encontrado" ||
-      resultado === "no_activado"
-    ) {
+    // H5: solo se anota lo que quedo REALMENTE sincronizado en Shopify.
+    // Antes tambien se anotaba 'no_encontrado' y 'no_activado', asi que un SKU
+    // que todavia no existia en Shopify quedaba marcado como resuelto y el
+    // incremental no lo reintentaba nunca, aunque despues se creara el producto.
+    // Tampoco se anota 'error' (para reintentarlo) ni 'dry'.
+    if (resultado === "actualizado" || resultado === "sin_cambios") {
       snapshotNuevo[sku] = cantidad;
+    } else if (snapshotNuevo[sku] !== undefined) {
+      // Si estaba anotado de una corrida vieja (libreta envenenada por H5),
+      // lo sacamos para que vuelva a intentarse en la proxima pasada.
+      delete snapshotNuevo[sku];
     }
   }
 
@@ -195,6 +202,9 @@ export async function syncTodos({ full = false } = {}) {
   console.log(`  Sin cambios (Shopify)  : ${contadores.sin_cambios}`);
   console.log(`  No encontrados Shopify : ${contadores.no_encontrado}`);
   console.log(`  No activados en DOT    : ${contadores.no_activado}`);
+  console.log(`  Ambiguos (no escritos) : ${contadores.ambiguo ?? 0}`);
   console.log(`  Errores                : ${contadores.error}`);
   console.log(`=== Fin sync ${modo.toLowerCase()} ===\n`);
+
+  return { ...contadores, total: stock.size };
 }
