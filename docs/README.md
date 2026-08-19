@@ -4,12 +4,18 @@ Middleware que sincroniza el stock del depósito **LOCAL DOT BAIRES** de Contabi
 hacia la location **IEY Shopping Dot Baires** de Shopify (`gid://shopify/Location/83342655574`).
 
 > **Estado (2026-08-19):** el sync **funciona y está convergido**. El disparador externo
-> (cron-job.org `7733389`) quedó configurado para correr **cada 30 min** en modo incremental
-> escribiendo de verdad, con aviso por mail ante fallo, pero sigue **deshabilitado**: espera un
-> token válido. El PAT nuevo (fine-grained, sólo este repo, `Actions: Read and write`, vence el
-> **2027-08-20**) está creado y **pendiente de aprobación de un owner de `IEY-Solutions`** —
-> `federico0330` es `member`, no `owner`, así que no puede aprobarlo. Hasta entonces el sync se
-> dispara a mano.
+> (cron-job.org `7733389`) quedó **completamente configurado y cargado con su token**: cada 30 min,
+> modo incremental, escribiendo de verdad, con aviso por mail ante fallo y ante auto-deshabilitación.
+>
+> Sigue **deshabilitado a propósito** porque falta **una sola cosa, y no es técnica**: el PAT
+> (fine-grained, sólo este repo, `Actions: Read and write`, vence el **2027-08-20**) está en estado
+> `Pending`, esperando que un **owner de `IEY-Solutions`** lo apruebe. `federico0330` es `member`, y
+> aprobar es facultad exclusiva de los owners. Verificado: el dispatch con ese token devuelve
+> `403 Resource not accessible by personal access token`.
+>
+> **Para terminar:** el owner aprueba en Organizations → IEY-Solutions → Settings → Personal access
+> tokens → Pending requests → `cron-job.org - disparo sync stock DOT` → Approve. Después alcanza con
+> marcar "Habilitar job" en el cronjob. Nada más.
 > Ver [`specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md`](specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md).
 > La spec v2 del rediseño está escrita y pendiente de SPEC_CHALLENGE 02.
 
