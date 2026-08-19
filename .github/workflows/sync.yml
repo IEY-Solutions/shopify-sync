@@ -1,11 +1,14 @@
 name: Sync stock Contabilium -> Shopify
 
 # Corre el sync INCREMENTAL en la nube, gratis (repo publico).
-# - schedule: cada 5 min (minimo de GitHub; puede atrasarse segun su carga).
-# - workflow_dispatch: permite correrlo a mano desde la pestana "Actions".
+#
+# SIN `schedule:` a proposito. Dos razones medidas:
+#   1. El schedule de GitHub entrego el 5% de las corridas pedidas: de las ~19.300
+#      que pedia el cron */5 solo ocurrieron 2.806 (ver docs/diagnostico-2026-08-19.md, H2).
+#   2. Los workflows CON `schedule:` se auto-desactivan a los 60 dias sin actividad
+#      en el repo; los que se disparan desde afuera, no (H1).
+# El disparo es externo (cron-job.org -> workflow_dispatch) o manual.
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -59,9 +62,8 @@ jobs:
           CONTABILIUM_CLIENT_ID: ${{ secrets.CONTABILIUM_CLIENT_ID }}
           CONTABILIUM_CLIENT_SECRET: ${{ secrets.CONTABILIUM_CLIENT_SECRET }}
           CONTABILIUM_DOT_DEPOSITO_ID: ${{ secrets.CONTABILIUM_DOT_DEPOSITO_ID }}
-          # En schedule no hay inputs -> cae a "false" (comportamiento historico).
-          # En workflow_dispatch se elige, y por defecto simula.
-          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Por defecto SIMULA. Escribir en Shopify es una decision explicita.
+          DRY_RUN: ${{ inputs.dry_run || 'true' }}
 
       # Guardar la libreta actualizada para la proxima corrida (siempre, aun si fallo).
       - name: Guardar estado (cache)
