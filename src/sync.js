@@ -27,9 +27,24 @@ function esDryRun() {
   return String(process.env.DRY_RUN).toLowerCase() !== "false";
 }
 
+// Version del formato de la libreta. Se sube cuando una libreta vieja quedo
+// semanticamente envenenada y no alcanza con seguir usandola.
+//   v2: H5. Hasta v1 se anotaban como resueltos los 'no_encontrado' y
+//       'no_activado'. Esos SKUs quedan salteados por el atajo del incremental
+//       ANTES de llegar al codigo que los desanotaria, asi que no se reintentan
+//       nunca. La unica forma de recuperarlos es descartar la libreta una vez.
+const SNAPSHOT_VERSION = 2;
+
 function cargarSnapshot() {
   try {
-    if (existsSync(SNAPSHOT_PATH)) return JSON.parse(readFileSync(SNAPSHOT_PATH, "utf-8"));
+    if (!existsSync(SNAPSHOT_PATH)) return {};
+    const crudo = JSON.parse(readFileSync(SNAPSHOT_PATH, "utf-8"));
+    if (crudo && crudo.__v === SNAPSHOT_VERSION && crudo.skus) return crudo.skus;
+    console.warn(
+      "[libreta] formato viejo o envenenado por H5: se descarta y se re-siembra " +
+        "(esta corrida no escribe nada nuevo por eso, solo re-verifica contra Shopify)."
+    );
+    return {};
   } catch {
     /* archivo corrupto -> empezar con libreta vacia */
   }
@@ -38,7 +53,8 @@ function cargarSnapshot() {
 
 function guardarSnapshot(snap) {
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
-  writeFileSync(SNAPSHOT_PATH, JSON.stringify(snap, null, 2), "utf-8");
+  const payload = { __v: SNAPSHOT_VERSION, skus: snap };
+  writeFileSync(SNAPSHOT_PATH, JSON.stringify(payload, null, 2), "utf-8");
 }
 
 // -----------------------------------------------------------------------------
