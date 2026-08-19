@@ -6,7 +6,8 @@
   "scripts": {
     "sync": "node src/index.js",
     "sync:sku": "node src/index.js --sku",
-    "cron": "node src/index.js --cron"
+    "cron": "node src/index.js --cron",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -228,7 +228,7 @@ const QUERY_POR_SKU = `
 `;
 
 // Escapa el valor para meterlo entre comillas en la search syntax de Shopify.
-function escaparValorBusqueda(v) {
+export function escaparValorBusqueda(v) {
   return String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
@@ -240,6 +240,17 @@ export class SkuAmbiguoError extends Error {
   }
 }
 
+// Decide cual de los candidatos que devolvio Shopify es realmente el SKU pedido.
+// Separada de la consulta para poder testearla sin red (test/sku-match.test.js).
+//   - null            -> no hay coincidencia exacta (no escribir)
+//   - SkuAmbiguoError -> hay mas de una (no escribir: elegir seria elegir al azar)
+export function elegirVarianteExacta(edges, sku) {
+  const exactos = (edges ?? []).map((e) => e?.node).filter((n) => n && n.sku === sku);
+  if (exactos.length === 0) return null;
+  if (exactos.length > 1) throw new SkuAmbiguoError(sku, exactos.length);
+  return exactos[0];
+}
+
 export async function buscarVariantePorSku(sku) {
   const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
   const data = await shopifyGraphQL(QUERY_POR_SKU, {
@@ -248,20 +259,8 @@ export async function buscarVariantePorSku(sku) {
     first: CANDIDATOS_POR_SKU,
   });
 
-  const edges = data?.productVariants?.edges ?? [];
-
-  // Aun con comillas, Shopify puede devolver coincidencias parciales: filtramos
-  // por igualdad EXACTA del sku antes de usar cualquier resultado.
-  const exactos = edges.map((e) => e?.node).filter((n) => n && n.sku === sku);
-
-  if (exactos.length === 0) return null; // SKU no encontrado en Shopify
-  if (exactos.length > 1) {
-    // Shopify no impone unicidad de sku. Escribir en "la primera" seria elegir
-    // al azar: preferimos no escribir (regla: ante incertidumbre, no pisar).
-    throw new SkuAmbiguoError(sku, exactos.length);
-  }
-
-  const node = exactos[0];
+  const node = elegirVarianteExacta(data?.productVariants?.edges, sku);
+  if (!node) return null; // SKU no encontrado en Shopify
 
   const inventoryItemId = node.inventoryItem?.id;
   if (!inventoryItemId) return null;
