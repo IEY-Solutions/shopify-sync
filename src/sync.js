@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 
 import { getStockDeposito } from "./contabilium.js";
 import { resolverSku, setearStock, SkuAmbiguoError } from "./shopify.js";
+import { esNoSincronizable } from "./no-sincronizables.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // "Libreta" de lo ultimo que confirmamos en Shopify por cada SKU.
@@ -89,6 +90,8 @@ async function procesarSku(sku, stockObjetivo) {
     // H4: mas de una variante con el sku exacto. Elegir una seria elegir al azar.
     if (err instanceof SkuAmbiguoError) {
       console.warn(`  [SKIP] ${sku}: ${err.message} -> no se escribe`);
+      // Nombrar las variantes: es lo que permite deduplicarlas sin adivinar.
+      for (const linea of err.detalle()) console.warn(linea);
       return "ambiguo";
     }
     console.error(`  [ERROR] ${sku}: fallo al consultar Shopify -> ${err.message}`);
@@ -196,6 +199,7 @@ export async function syncTodos({ full = false } = {}) {
     no_activado: 0,
     error: 0,
     ambiguo: 0,
+    no_sincronizable: 0, // conceptos de facturacion, no mercaderia (AC-16)
     saltado: 0, // incremental: sin cambios desde la ultima vez (no se consulto Shopify)
   };
 
@@ -204,6 +208,14 @@ export async function syncTodos({ full = false } = {}) {
   let procesados = 0;
 
   for (const [sku, cantidad] of stock) {
+    // Conceptos de facturacion (comisiones, envios): no son mercaderia y nunca
+    // van a existir en Shopify. Se descartan ANTES de consultar, asi no gastan
+    // una query ni ensucian el conteo de "no encontrado" en cada corrida.
+    if (esNoSincronizable(sku)) {
+      contadores.no_sincronizable++;
+      continue;
+    }
+
     // Atajo del incremental: si la libreta ya dice este valor, no tocamos Shopify.
     if (!full && snapshotPrevio[sku] === cantidad) {
       contadores.saltado++;
@@ -247,6 +259,7 @@ export async function syncTodos({ full = false } = {}) {
   console.log(`  Simulados (DRY)        : ${contadores.dry}`);
   console.log(`  Sin cambios (Shopify)  : ${contadores.sin_cambios}`);
   console.log(`  No encontrados Shopify : ${contadores.no_encontrado}`);
+  console.log(`  No sincronizables      : ${contadores.no_sincronizable} (conceptos de facturacion, esperado)`);
   console.log(`  No activados en DOT    : ${contadores.no_activado}`);
   console.log(`  Ambiguos (no escritos) : ${contadores.ambiguo ?? 0}`);
   console.log(`  Errores                : ${contadores.error}`);

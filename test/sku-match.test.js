@@ -8,10 +8,15 @@
 // Corre con: node --test test/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { elegirVarianteExacta, escaparValorBusqueda, SkuAmbiguoError } from "../src/shopify.js";
+import { elegirVarianteExacta, escaparValorBusqueda, SkuAmbiguoError, QUERY_POR_SKU } from "../src/shopify.js";
 
-const nodo = (sku) => ({ sku, id: `gid://shopify/ProductVariant/${sku}`, inventoryItem: { id: `ii-${sku}` } });
-const edges = (...skus) => skus.map((s) => ({ node: nodo(s) }));
+const nodo = (sku, titulo = `Producto ${sku}`, n = 1) => ({
+  sku,
+  id: `gid://shopify/ProductVariant/${sku}-${n}`,
+  product: { id: `gid://shopify/Product/${sku}-${n}`, title: titulo },
+  inventoryItem: { id: `ii-${sku}` },
+});
+const edges = (...skus) => skus.map((s, i) => ({ node: nodo(s, `Producto ${s}`, i + 1) }));
 
 test("elige la variante exacta aunque Shopify devuelva prefijos mas largos", () => {
   const e = edges(
@@ -121,4 +126,54 @@ test("la mutation declara @idempotent en el campo, con key como variable", () =>
 test("la directiva va en el campo y no en la operacion", () => {
   const lineaOperacion = MUTATION_SET.split("\n").find((l) => l.includes("mutation InventorySet"));
   assert.ok(!lineaOperacion.includes("@idempotent"), "@idempotent va en el campo, no en la operacion");
+});
+
+// -----------------------------------------------------------------------------
+// Un SKU ambiguo tiene que NOMBRAR las variantes, no solo contarlas
+// -----------------------------------------------------------------------------
+// Los 41 ambiguos del deposito DOT tienen los 41 exactamente 2 variantes. Con
+// solo el numero, el hallazgo no es accionable: nadie sabe cual duplicado
+// borrar. Invariante 4 de AGENTS.md: una divergencia se reporta -- y un reporte
+// que no nombra el objeto no sirve de nada.
+
+test("el error de ambiguedad expone las variantes duplicadas con su producto", () => {
+  const e = [
+    { node: nodo("IEY-COMBO-IEY108N-TRANSP-IP16E", "Combo iPhone 16e transparente", 1) },
+    { node: nodo("IEY-COMBO-IEY108N-TRANSP-IP16E", "Combo iPhone 16e transparente (duplicado)", 2) },
+  ];
+  try {
+    elegirVarianteExacta(e, "IEY-COMBO-IEY108N-TRANSP-IP16E");
+    assert.fail("tenia que lanzar SkuAmbiguoError");
+  } catch (err) {
+    assert.ok(err instanceof SkuAmbiguoError);
+    assert.equal(err.candidatos.length, 2);
+    assert.equal(err.candidatos[0].variantId, "gid://shopify/ProductVariant/IEY-COMBO-IEY108N-TRANSP-IP16E-1");
+    assert.equal(err.candidatos[0].producto, "Combo iPhone 16e transparente");
+    assert.equal(err.candidatos[1].producto, "Combo iPhone 16e transparente (duplicado)");
+  }
+});
+
+test("detalle() da una linea por variante, con id y nombre de producto", () => {
+  const e = [
+    { node: nodo("SKU-X", "Producto A", 1) },
+    { node: nodo("SKU-X", "Producto B", 2) },
+  ];
+  const err = (() => { try { elegirVarianteExacta(e, "SKU-X"); } catch (x) { return x; } })();
+  const lineas = err.detalle();
+  assert.equal(lineas.length, 2);
+  assert.match(lineas[0], /gid:\/\/shopify\/ProductVariant\/SKU-X-1 — Producto A/);
+  assert.match(lineas[1], /gid:\/\/shopify\/ProductVariant\/SKU-X-2 — Producto B/);
+});
+
+test("una variante sin producto no rompe el reporte", () => {
+  const sinProducto = { sku: "SKU-Y", id: "gid://v/1", inventoryItem: { id: "ii" } };
+  const e = [{ node: sinProducto }, { node: { ...sinProducto, id: "gid://v/2" } }];
+  const err = (() => { try { elegirVarianteExacta(e, "SKU-Y"); } catch (x) { return x; } })();
+  assert.equal(err.candidatos.length, 2);
+  assert.equal(err.candidatos[0].producto, "(sin titulo)");
+  assert.match(err.detalle()[0], /\(sin titulo\)/);
+});
+
+test("la query pide el producto: sin eso no hay como nombrar el duplicado", () => {
+  assert.match(QUERY_POR_SKU, /product\s*\{[^}]*title/s);
 });

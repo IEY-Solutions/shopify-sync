@@ -206,13 +206,17 @@ async function shopifyGraphQL(query, variables) {
 // Defensa en tres capas: comillas, first > 1, y verificacion del sku devuelto.
 const CANDIDATOS_POR_SKU = 10;
 
-const QUERY_POR_SKU = `
+export const QUERY_POR_SKU = `
   query GetVariantBySku($query: String!, $locationId: ID!, $first: Int!) {
     productVariants(first: $first, query: $query) {
       edges {
         node {
           id
           sku
+          product {
+            id
+            title
+          }
           inventoryItem {
             id
             inventoryLevel(locationId: $locationId) {
@@ -234,10 +238,27 @@ export function escaparValorBusqueda(v) {
 }
 
 export class SkuAmbiguoError extends Error {
-  constructor(sku, cantidad) {
-    super(`SKU ambiguo: ${cantidad} variantes de Shopify tienen el sku exacto "${sku}"`);
+  // `candidatos` son los nodos exactos que devolvio Shopify. Sin ellos el
+  // hallazgo es un numero ("41 ambiguos") que nadie puede accionar; con ellos es
+  // una lista de variantes concretas para deduplicar. Invariante 4 de AGENTS.md:
+  // una divergencia se REPORTA -- y un reporte que no nombra el objeto no sirve.
+  constructor(sku, candidatos) {
+    const lista = Array.isArray(candidatos) ? candidatos : [];
+    super(`SKU ambiguo: ${lista.length} variantes de Shopify tienen el sku exacto "${sku}"`);
     this.name = "SkuAmbiguoError";
     this.sku = sku;
+    this.candidatos = lista.map((n) => ({
+      variantId: n?.id ?? null,
+      productId: n?.product?.id ?? null,
+      producto: n?.product?.title ?? "(sin titulo)",
+    }));
+  }
+
+  // Una linea por variante, lista para el log.
+  detalle() {
+    return this.candidatos.map(
+      (c) => `      - ${c.variantId ?? "(sin id)"} — ${c.producto}`
+    );
   }
 }
 
@@ -248,7 +269,7 @@ export class SkuAmbiguoError extends Error {
 export function elegirVarianteExacta(edges, sku) {
   const exactos = (edges ?? []).map((e) => e?.node).filter((n) => n && n.sku === sku);
   if (exactos.length === 0) return null;
-  if (exactos.length > 1) throw new SkuAmbiguoError(sku, exactos.length);
+  if (exactos.length > 1) throw new SkuAmbiguoError(sku, exactos);
   return exactos[0];
 }
 
