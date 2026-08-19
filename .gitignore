@@ -15,3 +15,10 @@ npm-debug.log*
 
 # Sistema operativo
 .DS_Store
+
+# Harness (scripts Python del scaffold)
+__pycache__/
+render-failures.log*
+
+# Artefactos del browser MCP
+.playwright-mcp/
