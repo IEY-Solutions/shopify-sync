@@ -196,7 +196,7 @@ async function shopifyGraphQL(query, variables) {
 // -----------------------------------------------------------------------------
 // Devuelve { inventoryItemId, available } o null si el SKU no existe en Shopify.
 // - inventoryItemId: el GID del inventory item (se cachea).
-// - available: stock actual en la location DOT (sirve como compareQuantity).
+// - available: stock actual en la location DOT (sirve como changeFromQuantity).
 //              Es null si el item NO esta activado en esa location.
 // H4: el campo `sku` de Shopify es TOKENIZADO con coincidencia parcial, y 671 de
 // los 2562 SKUs del deposito (26,2%) son prefijo estricto de otro. Con
@@ -323,9 +323,16 @@ export async function resolverSku(sku) {
 // -----------------------------------------------------------------------------
 // setearStock — inventorySetQuantities (cantidad absoluta, compare-and-set)
 // -----------------------------------------------------------------------------
-// compareQuantity protege contra cambios concurrentes: Shopify solo aplica el
+// changeFromQuantity protege contra cambios concurrentes: Shopify solo aplica el
 // cambio si el stock persistido sigue siendo el que leimos. Si alguien lo movio
 // en el medio, devuelve userError y NO pisa el valor.
+//
+// El campo se llamaba `compareQuantity` hasta la API 2026-01. Desde la 2026-04
+// ese campo (y `ignoreCompareQuantity`) fueron ELIMINADOS y su reemplazo es
+// `changeFromQuantity`, que acepta `null` para saltear la validacion.
+// El Dev Dashboard de la app marcaba la llamada vieja como obsoleta con fecha
+// limite 2027-01-01. Verificado contra el schema de 2026-04:
+// https://shopify.dev/docs/api/admin-graphql/2026-04/input-objects/InventoryQuantityInput
 const MUTATION_SET = `
   mutation InventorySet($input: InventorySetQuantitiesInput!) {
     inventorySetQuantities(input: $input) {
@@ -338,10 +345,9 @@ const MUTATION_SET = `
   }
 `;
 
-export async function setearStock(inventoryItemId, quantity, compareQuantity) {
-  const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
-
-  const input = {
+// Construye el input de la mutation. Separado para poder testear el shape sin red.
+export function construirInputSet({ inventoryItemId, locationId, quantity, changeFromQuantity }) {
+  return {
     name: "available",
     reason: "correction",
     referenceDocumentUri: "iey://contabilium/deposito-dot-baires/sync",
@@ -350,10 +356,15 @@ export async function setearStock(inventoryItemId, quantity, compareQuantity) {
         inventoryItemId,
         locationId,
         quantity,
-        compareQuantity, // numero esperado actual; protege concurrencia
+        changeFromQuantity, // numero esperado actual; protege concurrencia
       },
     ],
   };
+}
+
+export async function setearStock(inventoryItemId, quantity, changeFromQuantity) {
+  const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
+  const input = construirInputSet({ inventoryItemId, locationId, quantity, changeFromQuantity });
 
   const data = await shopifyGraphQL(MUTATION_SET, { input });
   const userErrors = data?.inventorySetQuantities?.userErrors ?? [];

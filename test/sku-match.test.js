@@ -59,3 +59,47 @@ test("tolera edges con node nulo sin romper", () => {
   const e = [{ node: null }, ...edges("IEY-105-NEGRO")];
   assert.equal(elegirVarianteExacta(e, "IEY-105-NEGRO").sku, "IEY-105-NEGRO");
 });
+
+// -----------------------------------------------------------------------------
+// Contrato del input de inventorySetQuantities (API 2026-04)
+// -----------------------------------------------------------------------------
+// Desde 2026-04 Shopify ELIMINO `compareQuantity` e `ignoreCompareQuantity`; el
+// reemplazo es `changeFromQuantity`. El Dev Dashboard daba fecha limite
+// 2027-01-01. Este test congela el shape para que un revert silencioso no pase.
+import { construirInputSet } from "../src/shopify.js";
+
+test("el input usa changeFromQuantity y NO compareQuantity", () => {
+  const input = construirInputSet({
+    inventoryItemId: "gid://shopify/InventoryItem/1",
+    locationId: "gid://shopify/Location/83342655574",
+    quantity: 7,
+    changeFromQuantity: 5,
+  });
+  const q = input.quantities[0];
+  assert.equal(q.changeFromQuantity, 5);
+  assert.ok(!("compareQuantity" in q), "compareQuantity fue eliminado en la API 2026-04");
+  assert.ok(!("ignoreCompareQuantity" in input), "ignoreCompareQuantity fue eliminado en la API 2026-04");
+  assert.deepEqual(Object.keys(q).sort(), ["changeFromQuantity", "inventoryItemId", "locationId", "quantity"]);
+});
+
+test("changeFromQuantity null es valido: saltea la comprobacion", () => {
+  const input = construirInputSet({
+    inventoryItemId: "gid://shopify/InventoryItem/1",
+    locationId: "gid://shopify/Location/1",
+    quantity: 0,
+    changeFromQuantity: null,
+  });
+  assert.equal(input.quantities[0].changeFromQuantity, null);
+});
+
+test("solo se escribe la location DOT y el name es available", () => {
+  const input = construirInputSet({
+    inventoryItemId: "gid://shopify/InventoryItem/1",
+    locationId: "gid://shopify/Location/83342655574",
+    quantity: 3,
+    changeFromQuantity: 3,
+  });
+  assert.equal(input.name, "available");
+  assert.equal(input.quantities.length, 1);
+  assert.equal(input.quantities[0].locationId, "gid://shopify/Location/83342655574");
+});

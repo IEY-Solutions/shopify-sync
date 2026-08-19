@@ -69,7 +69,12 @@ jobs:
           SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
-          SHOPIFY_API_VERSION: ${{ secrets.SHOPIFY_API_VERSION }}
+          # NO es un secreto: es una version de contrato y tiene que estar a la
+          # vista, versionada con el codigo que la asume. Hasta 2026-01 el input
+          # de inventorySetQuantities usaba `compareQuantity`; desde 2026-04 ese
+          # campo fue eliminado y su reemplazo es `changeFromQuantity`.
+          # Ver docs/specs/001-dot-stock-sync/findings/p0-shopify-app.md
+          SHOPIFY_API_VERSION: "2026-04"
           SHOPIFY_DOT_LOCATION_ID: ${{ secrets.SHOPIFY_DOT_LOCATION_ID }}
           CONTABILIUM_API_URL: ${{ secrets.CONTABILIUM_API_URL }}
           CONTABILIUM_CLIENT_ID: ${{ secrets.CONTABILIUM_CLIENT_ID }}
