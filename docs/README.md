@@ -3,20 +3,17 @@
 Middleware que sincroniza el stock del depósito **LOCAL DOT BAIRES** de Contabilium (`127356`)
 hacia la location **IEY Shopping Dot Baires** de Shopify (`gid://shopify/Location/83342655574`).
 
-> **Estado (2026-08-19):** el sync **funciona y está convergido**. El disparador externo
-> (cron-job.org `7733389`) quedó **completamente configurado y cargado con su token**: cada 30 min,
-> modo incremental, escribiendo de verdad, con aviso por mail ante fallo y ante auto-deshabilitación.
+> **Estado (2026-08-19):** el sync **corre solo**. El disparador externo (cron-job.org `7733389`)
+> dispara `sync.yml` **cada 30 min** en modo incremental escribiendo de verdad, con aviso por mail
+> ante fallo y ante auto-deshabilitación. Verificado de punta a punta: el cronjob registra
+> `204 No Content` y la corrida `32290610062` (19:00:39 UTC, disparada sin intervención humana) dio
+> `DRY_RUN=false`, 2.562 SKUs, **0 errores** en 63,7 s.
 >
-> Sigue **deshabilitado a propósito** porque falta **una sola cosa, y no es técnica**: el PAT
-> (fine-grained, sólo este repo, `Actions: Read and write`, vence el **2027-08-20**) está en estado
-> `Pending`, esperando que un **owner de `IEY-Solutions`** lo apruebe. `federico0330` es `member`, y
-> aprobar es facultad exclusiva de los owners. Verificado: el dispatch con ese token devuelve
-> `403 Resource not accessible by personal access token`.
+> ⚠️ **El PAT vence el 2027-08-20.** Es fine-grained, alcance `IEY-Solutions/shopify-sync` con
+> `Actions: Read and write`, y **su renovación necesita la aprobación de un owner de la
+> organización** — no alcanza con ser admin del repo. Un PAT que caduca en silencio reproduce
+> exactamente el modo de falla que originó este proyecto.
 >
-> **Para terminar:** el owner aprueba en Organizations → IEY-Solutions → Settings → Personal access
-> tokens → Pending requests → `cron-job.org - disparo sync stock DOT` → Approve. Después alcanza con
-> marcar "Habilitar job" en el cronjob. Nada más.
-> Ver [`specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md`](specs/001-dot-stock-sync/findings/coherencia-2026-08-19.md).
 > La spec v2 del rediseño está escrita y pendiente de SPEC_CHALLENGE 02.
 
 > **Nota:** `iey-ai › evidence/` significa

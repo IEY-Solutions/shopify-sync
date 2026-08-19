@@ -50,9 +50,26 @@ $ gh api user/memberships/orgs/IEY-Solutions --jq '{role,state}'
 ```
 
 Aprobar un pedido de PAT fine-grained requiere ser **owner** de la organización. Es decir: el sync
-automático depende hoy de una persona con rol de owner, no de nada técnico. La alternativa —un PAT
+automático dependía de una persona con rol de owner, no de nada técnico. La alternativa —un PAT
 clásico con scopes `repo` + `workflow`— no necesita aprobación de la org, pero da acceso a **todos**
 los repositorios del usuario y queda guardado en un tercero.
+
+### Cerrado el mismo día
+
+`agustinmorales-iey` aprobó el pedido. El cronjob quedó habilitado y **el sync corre solo**:
+
+| Evidencia | Valor |
+|---|---|
+| Historial de cron-job.org | `204 No Content` · Éxito |
+| Corrida disparada sin humano | `32290610062`, creada 19:00:39 UTC |
+| Modo | `DRY_RUN: false`, incremental, 63,7 s |
+| Resultado | 2.562 SKUs · 2.434 salteados · 87 no encontrados · 41 ambiguos · **0 errores** |
+
+**Lo que este episodio deja como invariante operativa:** el disparo automático depende de una
+credencial que **una persona emite y otra aprueba**, y que **vence el 2027-08-20**. Renovarla no es
+trámite de quien mantiene el repo: hace falta un owner de la organización. Por eso las
+notificaciones por mail de cron-job.org (fallo y auto-deshabilitación) dejaron de ser opcionales —
+son el único aviso de que la credencial murió.
 
 ## C-02 — "`verify.sh` todavía no corre `npm test`" — **falso**
 

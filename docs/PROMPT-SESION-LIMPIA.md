@@ -11,7 +11,7 @@ Trabajo en `~/iey/shopify-sync` y en `~/iey/iey-ai`. Hablame en español.
 
 ## Leé esto ANTES de preguntarme nada
 
-1. `~/iey/shopify-sync/docs/specs/001-dot-stock-sync/findings/p0-decisiones.md` — **empezá acá**.
+1. `~/iey/iey-ai/docs/specs/dot-stock-sync/evidence/p0-decisiones.md` — **empezá acá**.
    Nueve decisiones ya tomadas. Lo que está ahí no se vuelve a preguntar.
 2. `~/iey/shopify-sync/docs/README.md` — mapa de toda la documentación.
 3. `~/iey/shopify-sync/docs/specs/001-dot-stock-sync/README.md` — índice de la spec y orden de lectura.
