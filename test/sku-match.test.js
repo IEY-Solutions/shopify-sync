@@ -103,3 +103,22 @@ test("solo se escribe la location DOT y el name es available", () => {
   assert.equal(input.quantities.length, 1);
   assert.equal(input.quantities[0].locationId, "gid://shopify/Location/83342655574");
 });
+
+// -----------------------------------------------------------------------------
+// La directiva @idempotent es obligatoria desde la API 2026-04
+// -----------------------------------------------------------------------------
+// Sin ella Shopify responde BAD_REQUEST. Se detecto en produccion en la corrida
+// 32280618922: "The @idempotent directive is required for this mutation but was
+// not provided.". H12 del diagnostico eran DOS cambios, no uno: el renombre de
+// compareQuantity y esta directiva.
+import { MUTATION_SET } from "../src/shopify.js";
+
+test("la mutation declara @idempotent en el campo, con key como variable", () => {
+  assert.match(MUTATION_SET, /\$idempotencyKey:\s*String!/);
+  assert.match(MUTATION_SET, /inventorySetQuantities\(input:\s*\$input\)\s*@idempotent\(key:\s*\$idempotencyKey\)/);
+});
+
+test("la directiva va en el campo y no en la operacion", () => {
+  const lineaOperacion = MUTATION_SET.split("\n").find((l) => l.includes("mutation InventorySet"));
+  assert.ok(!lineaOperacion.includes("@idempotent"), "@idempotent va en el campo, no en la operacion");
+});

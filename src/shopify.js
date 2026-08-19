@@ -10,6 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -333,9 +334,13 @@ export async function resolverSku(sku) {
 // El Dev Dashboard de la app marcaba la llamada vieja como obsoleta con fecha
 // limite 2027-01-01. Verificado contra el schema de 2026-04:
 // https://shopify.dev/docs/api/admin-graphql/2026-04/input-objects/InventoryQuantityInput
-const MUTATION_SET = `
-  mutation InventorySet($input: InventorySetQuantitiesInput!) {
-    inventorySetQuantities(input: $input) {
+// La directiva @idempotent es OBLIGATORIA desde la API 2026-04. Sin ella la
+// mutation falla con BAD_REQUEST: "The @idempotent directive is required for
+// this mutation but was not provided." Va en el CAMPO, no en la operacion.
+// https://shopify.dev/docs/api/admin-graphql/2026-04/mutations/inventorySetQuantities
+export const MUTATION_SET = `
+  mutation InventorySet($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+    inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
       inventoryAdjustmentGroup {
         reason
         changes { name delta quantityAfterChange }
@@ -366,7 +371,13 @@ export async function setearStock(inventoryItemId, quantity, changeFromQuantity)
   const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
   const input = construirInputSet({ inventoryItemId, locationId, quantity, changeFromQuantity });
 
-  const data = await shopifyGraphQL(MUTATION_SET, { input });
+  // Clave por intento logico. El reintento interno de shopifyGraphQL reusa las
+  // mismas variables, asi que un reintento por 429/THROTTLED no duplica la
+  // escritura. No se deriva del contenido a proposito: dos escrituras legitimas
+  // del mismo valor en momentos distintos NO deben deduplicarse entre si.
+  const idempotencyKey = randomUUID();
+
+  const data = await shopifyGraphQL(MUTATION_SET, { input, idempotencyKey });
   const userErrors = data?.inventorySetQuantities?.userErrors ?? [];
   if (userErrors.length > 0) {
     throw new Error(`Shopify userErrors: ${JSON.stringify(userErrors)}`);
