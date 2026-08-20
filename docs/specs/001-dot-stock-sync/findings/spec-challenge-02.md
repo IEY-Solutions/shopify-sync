@@ -11,6 +11,9 @@
 
 **13 bloqueantes · 9 importantes · 3 menores.**
 
+> **Actualización 2026-08-20:** G2-09 quedó **cerrado** con dato directo, y G2-25 corregido en
+> código. Quedan **12 bloqueantes**.
+
 La v2 cerró de verdad lo que el challenge 01 pedía sobre el **estado** (dos campos de base,
 journal, lock, compuerta absoluta, `no_activado`, umbral de re-siembra). Lo que **no** cerró es el
 **clasificador de causa**, que es la pieza nueva y la única que justifica pasar de absoluto a
@@ -157,7 +160,16 @@ lecturas + N escrituras dentro del handler de G2-07.
 → De dónde sale la composición y con qué frescura; fan-out máximo medido; qué pasa cuando la
 expansión no cabe en el presupuesto de la invocación.
 
-### G2-09 — El riesgo 1 sigue abierto, es del mismo tipo que S-2, y probablemente se cierra con los scopes que ya hay
+### G2-09 — ~~El riesgo 1 sigue abierto~~ → **CERRADO el 2026-08-20**
+
+> El challenger tenía razón en que se podía cerrar con los scopes existentes. Se hizo:
+> `69883428950` coincide con CENTRAL en 10/10 y con el DOT en 0/10; la location del DOT, al revés.
+> **La integración `25020` no escribe sobre el DOT. No hay tercer escritor.**
+> Evidencia: [`riesgo-1-locations.md`](riesgo-1-locations.md), corrida `32318957335`, 0 escrituras.
+> Lo que sigue abierto es la **vigilancia automática** del cambio de esa config (G2-11).
+
+<details><summary>Enunciado original</summary>
+
 
 Sobre qué location escribe la integración `25020` sigue **sin verificar**, y está publicando stock
 **ahora mismo** en 321 filas. Si escribiera sobre la location DOT habría un **tercer escritor
@@ -169,6 +181,8 @@ la app tiene `read_inventory` y `read_products`, que alcanzan para leer los nive
 todas las locations y observar cuál se mueve.
 
 → Cerrarlo antes de aprobar: es barato y es sólo lectura.
+
+</details>
 
 ### G2-10 — F-08 sigue sin resolverse: un SKU que desaparece deja Shopify ofreciendo lo que no hay
 
@@ -297,7 +311,12 @@ integración `29489` reserva contra `127356`.
 archivar, así que para el módulo nuevo lo correcto es "portar con su red de regresión". **H11**
 (1 request de Shopify por SKU) no tiene AC en ningún lado.
 
-### G2-25 — Los "81 productos reales" incluyen ~8 conceptos contables
+### G2-25 — ~~Los "81 productos reales" incluyen ~8 conceptos contables~~ → **CERRADO el 2026-08-20**
+
+> Los 7 se agregaron a `src/no-sincronizables.js` (`a7d2190`), confirmados con el usuario.
+> Verificado en producción: los faltantes reales pasaron de 81 a **74**. Los `PACK2` NO se
+> excluyeron: son productos reales.
+
 `IMPUESTOS-PROVINCIALES`, `IVA-IMPORTACION`, `LOGISTICA`, `MERCADERIA-IEY`, `REINTEGROS-01`,
 `CORPORATIVO`, `EXHIBIDORES`, `MIX-FUNDAS` son del mismo tipo que los 6 ya excluidos. La lista de no
 sincronizables quedó corta.
