@@ -1,6 +1,10 @@
 # Spec 001 — Sync de stock DOT Baires
 
-**Estado:** `SPEC_DRAFT v2` · pendiente de **SPEC_CHALLENGE 02** · P0 y P1 cerrados.
+**Estado:** `SPEC_DRAFT v2` · **SPEC_CHALLENGE 02 → `revision_required`** (13 bloqueantes) · P0 y P1 cerrados.
+
+> La v3 tiene que responder los 13 bloqueantes de
+> [`findings/spec-challenge-02.md`](findings/spec-challenge-02.md) antes de que se implemente nada.
+> **GATE 4 no arranca hasta entonces.**
 
 ## Orden de lectura
 
@@ -12,6 +16,9 @@
    del challenger que lo originó.
 4. **[`findings/spec-challenge-01.md`](findings/spec-challenge-01.md)** — el challenge de la v1:
    26 hallazgos, 11 bloqueantes. Es lo que la v2 tuvo que responder.
+5. **[`findings/spec-challenge-02.md`](findings/spec-challenge-02.md)** — el challenge de la v2:
+   13 bloqueantes. Es lo que la v3 tiene que responder.
+6. **[`findings/coherencia-2026-08-19.md`](findings/coherencia-2026-08-19.md)** — afirmaciones vencidas.
 
 ## Evidencia
 
