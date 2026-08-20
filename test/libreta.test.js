@@ -16,7 +16,9 @@ import { join } from "node:path";
 
 import {
   parsearLibreta,
+  parsearSnapshotContabilium,
   cargarSnapshot,
+  cargarLibretaCompleta,
   guardarSnapshot,
   SNAPSHOT_VERSION,
 } from "../src/sync.js";
@@ -138,5 +140,57 @@ test("un checkpoint parcial se relee sin problema (corrida interrumpida)", () =>
     assert.deepEqual(cargarSnapshot(ruta), { "IEY-103-NEGRO": 4 });
     guardarSnapshot({ "IEY-103-NEGRO": 4, "IEY-105-NEGRO": 2 }, ruta);
     assert.deepEqual(cargarSnapshot(ruta), { "IEY-103-NEGRO": 4, "IEY-105-NEGRO": 2 });
+  });
+});
+
+// -----------------------------------------------------------------------------
+// El snapshot de Contabilium que viaja en la libreta
+// -----------------------------------------------------------------------------
+// Es lo unico que permite detectar un SKU que DESAPARECE del deposito, porque el
+// bucle del sync solo recorre lo que Contabilium devuelve hoy.
+
+test("el snapshot de Contabilium se guarda y se relee", () => {
+  conDirTemporal((dir) => {
+    const ruta = join(dir, "last-sync.json");
+    guardarSnapshot({ "A": 1 }, ruta, new Map([["A", 1], ["B", 0]]));
+    const l = cargarLibretaCompleta(ruta);
+    assert.deepEqual(l.skus, { "A": 1 });
+    assert.deepEqual(l.contabilium, { "A": 1, "B": 0 });
+  });
+});
+
+test("una libreta v2 SIN el campo nuevo sigue siendo valida", () => {
+  // Compatibilidad hacia atras: la libreta que ya esta en el cache de Actions no
+  // tiene `contabilium`. No puede invalidarse por eso — solo no compara todavia.
+  conDirTemporal((dir) => {
+    const ruta = join(dir, "last-sync.json");
+    writeFileSync(ruta, JSON.stringify({ __v: SNAPSHOT_VERSION, skus: { "A": 1 } }), "utf-8");
+    const l = cargarLibretaCompleta(ruta);
+    assert.deepEqual(l.skus, { "A": 1 });
+    assert.equal(l.contabilium, null);
+  });
+});
+
+test("parsearSnapshotContabilium descarta las versiones que no son la vigente", () => {
+  assert.deepEqual(parsearSnapshotContabilium({ __v: 2, contabilium: { "A": 1 } }), { "A": 1 });
+  assert.equal(parsearSnapshotContabilium({ __v: 1, contabilium: { "A": 1 } }), null);
+  assert.equal(parsearSnapshotContabilium({ __v: 2 }), null);
+  assert.equal(parsearSnapshotContabilium(null), null);
+});
+
+test("sin snapshot de Contabilium no se persiste el campo (no ensucia la libreta)", () => {
+  conDirTemporal((dir) => {
+    const ruta = join(dir, "last-sync.json");
+    guardarSnapshot({ "A": 1 }, ruta);
+    const crudo = JSON.parse(readFileSync(ruta, "utf-8"));
+    assert.ok(!("contabilium" in crudo));
+  });
+});
+
+test("un archivo corrupto no rompe cargarLibretaCompleta", () => {
+  conDirTemporal((dir) => {
+    const ruta = join(dir, "last-sync.json");
+    writeFileSync(ruta, "{roto", "utf-8");
+    assert.deepEqual(cargarLibretaCompleta(ruta), { skus: {}, contabilium: null });
   });
 });

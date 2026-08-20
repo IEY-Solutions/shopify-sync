@@ -7,6 +7,7 @@
 //   node src/index.js                         -> sync INCREMENTAL, UNA vez (rapido)
 //   node src/index.js --full                  -> sync COMPLETO, UNA vez (~26 min)
 //   node src/index.js --cron                  -> incremental c/1 min + completo diario
+//   node src/index.js --locations             -> diagnostico READ-ONLY del riesgo 1
 // -----------------------------------------------------------------------------
 
 import "dotenv/config"; // carga las variables del .env (requisito 2)
@@ -26,9 +27,37 @@ const sku = getFlag("--sku");
 const qtyRaw = getFlag("--qty");
 const esCron = args.includes("--cron");
 const esFull = args.includes("--full");
+const esLocations = args.includes("--locations");
+
+// --- Modo 0: diagnostico de locations (SOLO LECTURA) ---
+// Cierra el riesgo 1: sobre que location escribe la integracion nativa 25020.
+// No importa setearStock ni emite una sola mutation.
+if (esLocations) {
+  const { diagnosticarLocations, resumirCoincidencias } = await import("./diagnostico-locations.js");
+  diagnosticarLocations()
+    .then((r) => {
+      if (!r.concluyente) {
+        console.error("[FALLO] el diagnostico no pudo leer ninguna fila comparable.");
+        process.exit(1);
+      }
+      console.log("\n--- Coincidencias por location ---");
+      for (const c of resumirCoincidencias(r.filas)) {
+        const marca = c.locationId === r.locationDot ? "  <-- location DOT" : "";
+        console.log(
+          `  ${c.location}: coincide con CENTRAL en ${c.comoCentral}/${c.total}, ` +
+            `con DOT en ${c.comoDot}/${c.total}${marca}`
+        );
+      }
+      console.log("\n=== Fin diagnostico (0 escrituras) ===\n");
+    })
+    .catch((err) => {
+      console.error(`[FATAL] ${err.message}`);
+      process.exit(1);
+    });
+}
 
 // --- Modo 1: prueba de 1 SKU ---
-if (sku) {
+else if (sku) {
   const manualQty = qtyRaw !== null ? Number(qtyRaw) : null;
   if (manualQty !== null && !Number.isFinite(manualQty)) {
     console.error("El valor de --qty debe ser un numero entero.");

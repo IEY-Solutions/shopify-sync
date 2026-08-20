@@ -194,11 +194,11 @@ export function cantidadDeItem(item) {
 // Si algo falla (auth, HTTP, datos invalidos) lanza un Error. El llamador
 // (sync.js) NO debe actualizar Shopify si esto falla (requisito 15).
 // -----------------------------------------------------------------------------
-export async function getStockDeposito() {
+export async function getStockDeposito(depositoIdExplicito = null) {
   const baseUrl = process.env.CONTABILIUM_API_URL;
   const clientId = process.env.CONTABILIUM_CLIENT_ID;
   const clientSecret = process.env.CONTABILIUM_CLIENT_SECRET;
-  const depositoId = process.env.CONTABILIUM_DOT_DEPOSITO_ID;
+  const depositoId = depositoIdExplicito ?? process.env.CONTABILIUM_DOT_DEPOSITO_ID;
 
   if (!baseUrl || !clientId || !clientSecret || !depositoId) {
     throw new Error(
@@ -251,7 +251,7 @@ export async function getStockDeposito() {
   }
 
   if (stockPorSku.size === 0) {
-    throw new Error("Contabilium devolvio 0 SKUs para el deposito DOT (sospechoso, no se actualiza Shopify)");
+    throw new Error(`Contabilium devolvio 0 SKUs para el deposito ${depositoId} (sospechoso, no se actualiza Shopify)`);
   }
 
   if (reservados > 0) {

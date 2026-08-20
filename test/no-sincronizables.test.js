@@ -10,22 +10,37 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { esNoSincronizable, NO_SINCRONIZABLES } from "../src/no-sincronizables.js";
 
-test("los seis casos reales del deposito DOT quedan fuera del sync", () => {
-  // Salidos del log de la reconciliacion completa, run 32286643779.
+test("los trece casos reales del deposito DOT quedan fuera del sync", () => {
+  // Salidos de los logs de las reconciliaciones completas 32286643779 y 32315612134.
   for (const sku of [
     "BONIFICACIONES-01",
     "COMISIONES",
     "COMISIONES-MELI",
+    "CORPORATIVO",
     "DERECHOS-ADUANEROS",
     "ENVIO-01",
+    "EXHIBIDORES",
+    "IMPUESTOS-PROVINCIALES",
+    "IVA-IMPORTACION",
+    "LOGISTICA",
+    "MERCADERIA-IEY",
+    "REINTEGROS-01",
     "TASA-DESEMBOLSO",
   ]) {
     assert.equal(esNoSincronizable(sku), true, `${sku} deberia estar excluido`);
   }
 });
 
-test("la lista tiene exactamente seis codigos: crecer es una decision consciente", () => {
-  assert.equal(NO_SINCRONIZABLES.size, 6);
+test("la lista tiene exactamente trece codigos: crecer es una decision consciente", () => {
+  assert.equal(NO_SINCRONIZABLES.size, 13);
+});
+
+test("los PACK2 son productos reales y NO se excluyen", () => {
+  // Aparecen en la misma lista de "no encontrados" y tienen pinta de codigo raro,
+  // pero son packs de dos unidades: mercaderia que en algun momento va a la web.
+  for (const sku of ["IEY-60D-NEGRO-PACK2", "IEY-66D-NEGRO-PACK2", "IEY-69B-NEGRO-PACK2"]) {
+    assert.equal(esNoSincronizable(sku), false, `${sku} es un producto real`);
+  }
 });
 
 test("un producto real NO se filtra por parecerse", () => {

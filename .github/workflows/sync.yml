@@ -21,6 +21,11 @@ on:
         type: choice
         options: ["false", "true"]
         default: "false"
+      modo:
+        description: "sync = normal · locations = diagnostico SOLO LECTURA del riesgo 1 (no escribe nada)"
+        type: choice
+        options: ["sync", "locations"]
+        default: "sync"
 
 # No arrancar una corrida nueva si la anterior sigue en curso (anti-solapamiento).
 concurrency:
@@ -64,7 +69,12 @@ jobs:
       # Es el modo reconciliacion: detecta la deriva que el incremental no ve,
       # porque el incremental confia en la libreta y la libreta espeja Contabilium.
       - name: Correr sync
-        run: node src/index.js ${{ inputs.full == 'true' && '--full' || '' }}
+        run: |
+          if [ "${{ inputs.modo }}" = "locations" ]; then
+            node src/index.js --locations
+          else
+            node src/index.js ${{ inputs.full == 'true' && '--full' || '' }}
+          fi
         env:
           SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
@@ -82,6 +92,10 @@ jobs:
           CONTABILIUM_DOT_DEPOSITO_ID: ${{ secrets.CONTABILIUM_DOT_DEPOSITO_ID }}
           # Por defecto SIMULA. Escribir en Shopify es una decision explicita.
           DRY_RUN: ${{ inputs.dry_run || 'true' }}
+          # Este repo es PUBLICO y con el los logs de sus corridas. Con
+          # LOG_VERBOSE=true el log escribe una linea por SKU con su cantidad,
+          # o sea el catalogo entero: dejarlo apagado no es cosmetico.
+          LOG_VERBOSE: "false"
 
       # Guardar la libreta actualizada para la proxima corrida (siempre, aun si fallo).
       - name: Guardar estado (cache)

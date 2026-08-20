@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { getStockDeposito } from "./contabilium.js";
 import { resolverSku, setearStock, SkuAmbiguoError } from "./shopify.js";
 import { esNoSincronizable } from "./no-sincronizables.js";
+import { detectarAnomalias, formatearAnomalias } from "./anomalias.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // "Libreta" de lo ultimo que confirmamos en Shopify por cada SKU.
@@ -26,6 +27,18 @@ const SNAPSHOT_PATH = join(__dirname, "..", ".cache", "last-sync.json");
 
 function esDryRun() {
   return String(process.env.DRY_RUN).toLowerCase() !== "false";
+}
+
+// Este repositorio es PUBLICO, y con el los logs de sus corridas de Actions (ver
+// la doc de GitHub: "Read access to the repository is required" — en un repo
+// publico eso lo tiene cualquiera). Una reconciliacion completa escribia 2.388
+// lineas con SKU y cantidad, o sea el catalogo entero con su stock.
+//
+// Las lineas de "sin cambios" son el 95% de ese volumen y no aportan nada: el
+// resumen ya dice cuantas fueron. Quedan detras de una variable, apagadas por
+// defecto. Lo accionable -[SET], [DRY], [SKIP]- se sigue logueando siempre.
+function esVerboso() {
+  return String(process.env.LOG_VERBOSE).toLowerCase() === "true";
 }
 
 // Version del formato de la libreta. Se sube cuando una libreta vieja quedo
@@ -45,6 +58,31 @@ export function parsearLibreta(crudo) {
   return null;
 }
 
+// El snapshot de Contabilium de la corrida anterior: SKU -> cantidad, TAL COMO
+// lo devolvio Contabilium (no lo que quedo en Shopify). Es lo unico que permite
+// detectar un SKU que DESAPARECE del deposito, porque el bucle del sync solo
+// recorre lo que Contabilium devuelve hoy.
+// Campo opcional: una libreta v2 vieja no lo tiene y eso no la invalida — la
+// primera corrida tras el upgrade simplemente no compara.
+export function parsearSnapshotContabilium(crudo) {
+  if (crudo && crudo.__v === SNAPSHOT_VERSION && crudo.contabilium) return crudo.contabilium;
+  return null;
+}
+
+// Lee la libreta cruda una sola vez y devuelve las dos partes.
+export function cargarLibretaCompleta(ruta = SNAPSHOT_PATH) {
+  try {
+    if (!existsSync(ruta)) return { skus: {}, contabilium: null };
+    const crudo = JSON.parse(readFileSync(ruta, "utf-8"));
+    return {
+      skus: parsearLibreta(crudo) ?? {},
+      contabilium: parsearSnapshotContabilium(crudo),
+    };
+  } catch {
+    return { skus: {}, contabilium: null };
+  }
+}
+
 export function cargarSnapshot(ruta = SNAPSHOT_PATH) {
   try {
     if (!existsSync(ruta)) return {};
@@ -61,10 +99,11 @@ export function cargarSnapshot(ruta = SNAPSHOT_PATH) {
   return {};
 }
 
-export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH) {
+export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH, contabilium = null) {
   // H3: en un runner limpio .cache/ no existe y writeFileSync tira ENOENT.
   mkdirSync(dirname(ruta), { recursive: true });
   const payload = { __v: SNAPSHOT_VERSION, skus: snap };
+  if (contabilium) payload.contabilium = Object.fromEntries(contabilium);
   writeFileSync(ruta, JSON.stringify(payload, null, 2), "utf-8");
 }
 
@@ -117,7 +156,7 @@ async function procesarSku(sku, stockObjetivo) {
 
   // Sin cambios: el stock de Shopify ya coincide con Contabilium
   if (available === stockObjetivo) {
-    console.log(`  [OK] ${sku}: sin cambios (stock = ${stockObjetivo})`);
+    if (esVerboso()) console.log(`  [OK] ${sku}: sin cambios (stock = ${stockObjetivo})`);
     return "sin_cambios";
   }
 
@@ -187,9 +226,14 @@ export async function syncTodos({ full = false } = {}) {
   // Si Contabilium falla, lanza aca y Shopify queda intacto (requisito 15).
   const stock = await getStockDeposito();
 
-  // En incremental partimos de la libreta existente; en completo la reconstruimos.
-  const snapshotPrevio = full ? {} : cargarSnapshot();
+  // La libreta trae dos cosas: lo confirmado en Shopify y el snapshot de
+  // Contabilium de la corrida anterior. El segundo se lee SIEMPRE, tambien en
+  // --full: la deteccion de anomalias no depende del modo.
+  const libreta = cargarLibretaCompleta();
+  const snapshotPrevio = full ? {} : libreta.skus;
   const snapshotNuevo = { ...snapshotPrevio };
+
+  const anomalias = detectarAnomalias(libreta.contabilium, stock);
 
   const contadores = {
     actualizado: 0,
@@ -243,13 +287,13 @@ export async function syncTodos({ full = false } = {}) {
     // siguiente vuelva a verificar el resto.
     procesados++;
     if (!esDryRun() && procesados % CHECKPOINT_CADA === 0) {
-      guardarSnapshot(snapshotNuevo);
+      guardarSnapshot(snapshotNuevo, undefined, stock);
       console.log(`  [checkpoint] libreta persistida tras ${procesados} SKUs procesados`);
     }
   }
 
   // Solo persistimos la libreta si escribimos de verdad (no en dry-run).
-  if (!esDryRun()) guardarSnapshot(snapshotNuevo);
+  if (!esDryRun()) guardarSnapshot(snapshotNuevo, undefined, stock);
 
   const seg = ((Date.now() - inicio) / 1000).toFixed(1);
   console.log(`\n--- Resumen ${modo} (${seg}s) ---`);
@@ -263,7 +307,20 @@ export async function syncTodos({ full = false } = {}) {
   console.log(`  No activados en DOT    : ${contadores.no_activado}`);
   console.log(`  Ambiguos (no escritos) : ${contadores.ambiguo ?? 0}`);
   console.log(`  Errores                : ${contadores.error}`);
+
+  // Lo que el sistema hacia en silencio hasta ahora.
+  const lineas = formatearAnomalias(anomalias);
+  if (lineas.length > 0) {
+    console.log("");
+    for (const l of lineas) console.warn(l);
+  }
+
   console.log(`=== Fin sync ${modo.toLowerCase()} ===\n`);
 
-  return { ...contadores, total: stock.size };
+  return {
+    ...contadores,
+    total: stock.size,
+    desaparecidos: anomalias.desaparecidos.length,
+    puestos_en_cero: anomalias.puestosEnCero.length,
+  };
 }

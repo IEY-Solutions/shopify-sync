@@ -405,3 +405,81 @@ export async function setearStock(inventoryItemId, quantity, changeFromQuantity)
   }
   return data.inventorySetQuantities.inventoryAdjustmentGroup;
 }
+
+// -----------------------------------------------------------------------------
+// Diagnostico read-only: sobre que location escribe la integracion nativa
+// -----------------------------------------------------------------------------
+// Riesgo 1 de la spec, abierto desde P0 y unico de la familia de S-2 sin cerrar.
+// Si la integracion 25020 (deposito CENTRAL) escribiera sobre la location del
+// DOT, habria un TERCER escritor absoluto sobre el mismo inventario y el diseño
+// de deltas quedaria invalidado.
+//
+// Se dio por no verificable porque "requiere acceso al admin de Shopify". No lo
+// requiere: `read_products` + `read_inventory` alcanzan para leer los niveles de
+// un SKU en TODAS las locations, que es lo que decide la pregunta.
+//
+// NADA de esto escribe.
+
+const QUERY_LOCATIONS = `
+  query Locations($first: Int!) {
+    locations(first: $first) {
+      edges { node { id name isActive } }
+    }
+  }
+`;
+
+export async function listarLocations() {
+  const data = await shopifyGraphQL(QUERY_LOCATIONS, { first: 50 });
+  return (data?.locations?.edges ?? []).map((e) => e.node).filter(Boolean);
+}
+
+// Niveles de un SKU en TODAS las locations (no solo la del DOT).
+const QUERY_NIVELES_TODAS = `
+  query NivelesPorSku($query: String!, $first: Int!, $firstLevels: Int!) {
+    productVariants(first: $first, query: $query) {
+      edges {
+        node {
+          id
+          sku
+          inventoryItem {
+            id
+            inventoryLevels(first: $firstLevels) {
+              edges {
+                node {
+                  location { id name }
+                  quantities(names: ["available"]) { name quantity }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+// Devuelve [{ locationId, location, available }] o null si el SKU no resuelve.
+export async function leerNivelesEnTodasLasLocations(sku) {
+  const data = await shopifyGraphQL(QUERY_NIVELES_TODAS, {
+    query: `sku:"${escaparValorBusqueda(sku)}"`,
+    first: CANDIDATOS_POR_SKU,
+    firstLevels: 50,
+  });
+
+  let node;
+  try {
+    node = elegirVarianteExacta(data?.productVariants?.edges, sku);
+  } catch {
+    return null; // ambiguo: para un diagnostico no vale la pena elegir
+  }
+  if (!node) return null;
+
+  return (node.inventoryItem?.inventoryLevels?.edges ?? [])
+    .map((e) => e?.node)
+    .filter(Boolean)
+    .map((n) => ({
+      locationId: n.location?.id ?? null,
+      location: n.location?.name ?? "(sin nombre)",
+      available: n.quantities?.find((q) => q.name === "available")?.quantity ?? null,
+    }));
+}
