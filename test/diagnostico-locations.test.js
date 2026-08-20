@@ -101,6 +101,17 @@ test("sin filas no inventa conclusiones", () => {
 // La garantia que hace seguro correr esto contra produccion
 // -----------------------------------------------------------------------------
 
+test("la query NO pide campos que exijan read_locations", () => {
+  // La app tiene write_inventory, read_inventory y read_products. Pedir
+  // Location.name o la query raiz `locations` devuelve ACCESS_DENIED y tumba la
+  // corrida entera — verificado contra produccion en el run 32318874707.
+  const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const src = readFileSync(join(raiz, "src/shopify.js"), "utf-8");
+  const bloque = src.slice(src.indexOf("QUERY_NIVELES_TODAS"));
+  assert.ok(!/location\s*\{[^}]*name/s.test(bloque), "Location.name exige read_locations");
+  assert.ok(!/^\s*locations\s*\(/m.test(bloque), "la query raiz `locations` exige read_locations");
+});
+
 test("el diagnostico NO puede escribir: nada de mutations en su codigo", () => {
   // Se corre contra PRODUCCION y Contabilium no tiene sandbox. La garantia de
   // que es inocuo tiene que ser verificable, no una promesa del comentario: se

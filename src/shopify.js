@@ -420,18 +420,13 @@ export async function setearStock(inventoryItemId, quantity, changeFromQuantity)
 //
 // NADA de esto escribe.
 
-const QUERY_LOCATIONS = `
-  query Locations($first: Int!) {
-    locations(first: $first) {
-      edges { node { id name isActive } }
-    }
-  }
-`;
-
-export async function listarLocations() {
-  const data = await shopifyGraphQL(QUERY_LOCATIONS, { first: 50 });
-  return (data?.locations?.edges ?? []).map((e) => e.node).filter(Boolean);
-}
+// NO se usa la query raiz `locations` ni el campo `Location.name`: ambos exigen
+// el scope `read_locations`, que esta app NO tiene (write_inventory,
+// read_inventory, read_products). Verificado contra produccion en la corrida
+// 32318874707: "Access denied for name field. Required access: read_locations".
+//
+// El ID de la location alcanza para responder la pregunta, porque el de la DOT
+// ya lo conocemos (SHOPIFY_DOT_LOCATION_ID).
 
 // Niveles de un SKU en TODAS las locations (no solo la del DOT).
 const QUERY_NIVELES_TODAS = `
@@ -446,7 +441,7 @@ const QUERY_NIVELES_TODAS = `
             inventoryLevels(first: $firstLevels) {
               edges {
                 node {
-                  location { id name }
+                  location { id }
                   quantities(names: ["available"]) { name quantity }
                 }
               }
@@ -479,7 +474,8 @@ export async function leerNivelesEnTodasLasLocations(sku) {
     .filter(Boolean)
     .map((n) => ({
       locationId: n.location?.id ?? null,
-      location: n.location?.name ?? "(sin nombre)",
+      // Sin `read_locations` no hay nombre: se identifica por el sufijo del GID.
+      location: (n.location?.id ?? "").split("/").pop() || "(sin id)",
       available: n.quantities?.find((q) => q.name === "available")?.quantity ?? null,
     }));
 }

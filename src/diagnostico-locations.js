@@ -17,7 +17,7 @@
 // -----------------------------------------------------------------------------
 
 import { getStockDeposito } from "./contabilium.js";
-import { listarLocations, leerNivelesEnTodasLasLocations } from "./shopify.js";
+import { leerNivelesEnTodasLasLocations } from "./shopify.js";
 
 const DEPOSITO_CENTRAL = "96667"; // DEPOSITO OFICINA
 const MUESTRA = 12;
@@ -41,12 +41,9 @@ export async function diagnosticarLocations() {
   const locationDot = process.env.SHOPIFY_DOT_LOCATION_ID;
   console.log("\n=== Diagnostico de locations (SOLO LECTURA, no escribe nada) ===\n");
 
-  const locations = await listarLocations();
-  console.log(`Locations de Shopify (${locations.length}):`);
-  for (const l of locations) {
-    const marca = l.id === locationDot ? "  <-- la que escribe este sync (DOT)" : "";
-    console.log(`  ${l.id}  ${l.isActive ? "activa  " : "inactiva"}  ${l.name}${marca}`);
-  }
+  console.log(`Location que escribe este sync (DOT): ${locationDot}`);
+  console.log("Las demas se descubren por los niveles de inventario: la app no tiene");
+  console.log("`read_locations`, asi que se identifican por id y no por nombre.\n");
 
   console.log(`\nLeyendo Contabilium: DOT y CENTRAL (${DEPOSITO_CENTRAL})...`);
   const stockDot = await getStockDeposito();
