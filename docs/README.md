@@ -49,6 +49,8 @@ docs/
 │       └── findings/
 │           ├── README.md            ← dónde está la evidencia y por qué no acá
 │           ├── spec-challenge-01.md ← el challenge de la v1 (26 hallazgos)
+│           ├── spec-challenge-02.md ← el challenge de la v2 (13 hallazgos, 2 ya cerrados)
+│           ├── riesgo-1-locations.md ← la integración nativa NO escribe sobre el DOT
 │           └── coherencia-2026-08-19.md ← afirmaciones vencidas, con su refutación
 ├── project/                         ← contexto del dominio (scaffold)
 └── ai/knowledge/                    ← guías transversales (scaffold)

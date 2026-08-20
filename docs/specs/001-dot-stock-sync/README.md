@@ -1,6 +1,15 @@
 # Spec 001 — Sync de stock DOT Baires
 
-**Estado:** `SPEC_DRAFT v2` · **SPEC_CHALLENGE 02 → `revision_required`** (13 bloqueantes) · P0 y P1 cerrados.
+**Estado:** archivo histórico. **El contrato normativo se mudó a `iey-ai`.**
+
+> Desde el 2026-08-20 el contrato vive en `~/iey/iey-ai/docs/specs/dot-stock-sync/CONTRATO.md`
+> (decisión G2-01: había dos specs del mismo sistema y ya habían divergido en el comportamiento).
+> Ahí está también la matriz `AC ↔ gate` y la `HOJA-DE-RUTA.md` con lo que destraba cada bloqueante.
+>
+> Lo que queda **acá** es análisis, no contrato, y sigue vigente: el diagnóstico, los dos
+> SPEC_CHALLENGE, el findings de coherencia y el cierre del riesgo 1.
+
+**SPEC_CHALLENGE 02 → `revision_required`** · 12 bloqueantes abiertos (G2-09 y G2-25 cerrados).
 
 > La v3 tiene que responder los 13 bloqueantes de
 > [`findings/spec-challenge-02.md`](findings/spec-challenge-02.md) antes de que se implemente nada.
