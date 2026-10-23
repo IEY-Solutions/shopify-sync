@@ -1,0 +1,11 @@
+# arn
+id: p-12c3de
+biblioteca: arn-biblioteca
+requiere: v0.1
+datos: personal
+departamentos: [nucleo]
+agentes-mas: []
+agentes-menos: []
+mcp: []
+jerarquia: plana
+memoria: no

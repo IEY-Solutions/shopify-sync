@@ -22,3 +22,21 @@ render-failures.log*
 
 # Artefactos del browser MCP
 .playwright-mcp/
+
+# arn:inicio
+.agents/.arn/
+.agents/models.local.md
+# arn:claude
+.claude/agents/explorador.md
+.claude/agents/implementador.md
+.claude/agents/juez.md
+.claude/agents/orquestador.md
+.claude/agents/planificador.md
+.claude/agents/revisor-codigo.md
+.claude/settings.local.json
+.claude/skills/contratacion/
+.claude/skills/contrato-especialista/
+.claude/skills/criterios-cierre/
+.claude/skills/delegacion/
+.claude/skills/descomposicion-tareas/
+# arn:fin
