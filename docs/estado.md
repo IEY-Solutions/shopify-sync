@@ -1,12 +1,13 @@
 # Estado
 
-- Feature: ninguna (cerrada: deltas-dot-mas-isla-galerias — juez aprueba, `arn cerrar` ok)
-- Último paso: arreglada la semántica de deltas del DOT (ADR 0001 parcial, decidido por la persona)
-  y sumado el par de Galerías Pacífico en modo seguro/pendiente (sin gid/depósito reales todavía).
-  13 criterios verdes, 163 tests, aprobado por el juez tras 5 rondas de rechazo y arreglo real
-  (contrato archivado en docs/contratos/deltas-dot-mas-isla-galerias.md).
-- Próximo paso: cuando la persona tenga el gid de la location de Galerías Pacífico en Shopify y el
-  id de su depósito en Contabilium, activar ese par (hoy declarado con el sentinel PENDIENTE). Fuera
-  de alcance por ahora: el clasificador de causa por comprobante + compuerta manual del ADR 0001, y
-  el transporte vía BrokerContabilium (fase 2).
+- Feature: ninguna (cerrada: activar-el-par-real-de — juez aprueba, `arn cerrar` ok)
+- Último paso: `deltas-dot-mas-isla-galerias` mergeado a `main` (fast-forward, 165/165 verde).
+  Activado el par real de Galerías Pacífico en `.env.example` y en `.github/workflows/sync.yml`
+  (gid de Shopify `gid://shopify/Location/96849756246`, depósito Contabilium `139916`).
+- Próximo paso: la persona tiene que agregar `SHOPIFY_ISLA_LOCATION_ID` y
+  `CONTABILIUM_ISLA_DEPOSITO_ID` como GitHub Actions Secrets (Settings → Secrets and variables →
+  Actions) para que el workflow real los inyecte — sin eso, el par sigue tratándose como pendiente
+  en producción. Pendientes aparte, bloqueados fuera de este repo: el clasificador de causa por
+  comprobante (viable, los campos existen en Contabilium) y el transporte vía BrokerContabilium
+  (bloqueado: ese repo todavía no tiene cupo por cliente ni arregló el bug del "running" huérfano).
 - Departamento: direccion

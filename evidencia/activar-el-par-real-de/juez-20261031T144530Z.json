@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "feature": "activar-el-par-real-de",
+  "fecha": "2026-10-31T14:45:30+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "4169361c6a16617485623b409e2eba805bfa091b",
+    "diff_sha256": "2063543d8da93b1a6454114d1154ed11febe900ca1a52483e15a068491bd7c58"
+  },
+  "oraculo_sha256": null,
+  "contrato_sha256": "418b1f3e8c53f72e3ccd06253608fab7cb98d5c25a4839ecd282c9b89ce18198",
+  "evidencia_id": "activar-el-par-real-de/20261031T144515Z",
+  "veredicto": "APRUEBA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "activar-el-par-real-de/20261031T144515Z",
+      "motivo": "Se corrió `npm test` y salió con exit 0: 165 tests en verde, 0 fallidos, 0 salteados. Coincide con la espera `exit 0` y con los 165/165 del CA. El diff solo cambia `.env.example`, `.github/workflows/sync.yml` y agrega `tasks/.gitkeep`. No toca nada de `src/`. Lo verifiqué en el repo: `.env.example` tiene SHOPIFY_ISLA_LOCATION_ID=gid://shopify/Location/96849756246 y CONTABILIUM_ISLA_DEPOSITO_ID=139916 en lugar de PENDIENTE (R-1). `sync.yml` pasa las dos variables desde `secrets.*` al lado de las del DOT (líneas 89 y 94) (R-2). Los nombres son los mismos que lee `src/pares.js`. Sigue pasando el test 'ningun secreto esta escrito en el YAML: todos salen de secrets'."
+    }
+  ],
+  "hallazgos": [
+    "Aviso ARN-W066 en la evidencia: el contrato no tiene `congelado:`, así que arn no va a contar esta evidencia para el cierre hasta que se congele el contrato. No cambia el resultado de CA-1.",
+    "R-2 solo funciona en producción si los secrets SHOPIFY_ISLA_LOCATION_ID y CONTABILIUM_ISLA_DEPOSITO_ID existen en GitHub Actions. Mientras no estén, el par sigue pendiente. Ningún CA verifica esto y queda fuera de la evidencia."
+  ]
+}

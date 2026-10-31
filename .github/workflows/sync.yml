@@ -86,10 +86,12 @@ jobs:
           # Ver docs/specs/001-dot-stock-sync/findings/p0-shopify-app.md
           SHOPIFY_API_VERSION: "2026-04"
           SHOPIFY_DOT_LOCATION_ID: ${{ secrets.SHOPIFY_DOT_LOCATION_ID }}
+          SHOPIFY_ISLA_LOCATION_ID: ${{ secrets.SHOPIFY_ISLA_LOCATION_ID }}
           CONTABILIUM_API_URL: ${{ secrets.CONTABILIUM_API_URL }}
           CONTABILIUM_CLIENT_ID: ${{ secrets.CONTABILIUM_CLIENT_ID }}
           CONTABILIUM_CLIENT_SECRET: ${{ secrets.CONTABILIUM_CLIENT_SECRET }}
           CONTABILIUM_DOT_DEPOSITO_ID: ${{ secrets.CONTABILIUM_DOT_DEPOSITO_ID }}
+          CONTABILIUM_ISLA_DEPOSITO_ID: ${{ secrets.CONTABILIUM_ISLA_DEPOSITO_ID }}
           # Por defecto SIMULA. Escribir en Shopify es una decision explicita.
           DRY_RUN: ${{ inputs.dry_run || 'true' }}
           # Este repo es PUBLICO y con el los logs de sus corridas. Con
