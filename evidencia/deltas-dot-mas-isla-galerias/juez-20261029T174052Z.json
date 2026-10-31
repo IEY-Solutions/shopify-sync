@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "feature": "deltas-dot-mas-isla-galerias",
+  "fecha": "2026-10-29T17:40:52+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "deca4e9e71983f0dda7cc98aebc16a022f6535e0",
+    "diff_sha256": "b3c830b3dbbf22bde126a2e547be575094600b9796981d22203c0dd29d424157"
+  },
+  "oraculo_sha256": "697cee18a53df8ca8d0b793b82ec3e3d0e2f67de3d8360b4f6520a48be58b76f",
+  "contrato_sha256": "4f0abbdec4df61a1260d0e940f3b00715719c780723ba2d92994cab1b7314d73",
+  "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+  "veredicto": "RECHAZA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/sync-deltas.test.js pasa (6/6), pero solo ejercita la función pura calcularEscritura y no el sync del par DOT. En el código, el DOT quedó con dos líneas base. El incremental (correrTodosLosPares/ejecutarPar) usa .cache/last-sync.dot.json. La reconciliación --full, que se dispara en producción con el input `full` del workflow, entra por src/index.js:112-114 y va a syncTodos→procesarSku, que calcula el delta contra libreta.contabilium del legado .cache/last-sync.json (src/sync.js:314,351). Ese archivo deja de avanzar en el incremental después de la migración. Un --full aplica entonces sobre Shopify un delta que el incremental ya había trasladado, o viceversa: hay descuento doble o re-inflado. La línea base del DOT no es durable ni única, como exige R-1."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/multi-par.test.js 5/5 en verde. construirPares arma los pares desde env y cada plan lleva el locationId de su propio par. Un grep de src/ no encuentra ids literales de depósito ni de location."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/libreta-multi-location.test.js 3/3 en verde. rutaSnapshotPara da un archivo por stateKey, y dos pares en la misma invocación no se pisan la libreta, verificado con IO real en un directorio temporal."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/no-tocar-central.test.js 3/3 en verde. Solo se planean escrituras hacia el locationId de un par declarado, nunca hacia CENTRAL ni hacia un default."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/sku-match.test.js 18/18 en verde. Incluye el caso de buscarVariantePorSku con un locationId de isla distinto del DOT: resuelve el sku exacto y lee el available de esa location."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/cantidades-enteras.test.js 4/4 en verde. cantidadDeItem trunca y calcularEscritura redondea, tanto en el caso sembrado como en el de delta, sin distinguir par."
+    },
+    {
+      "id": "CA-7",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "Los tests (25/25) cubren ejecutarPar, pero R-7 rige para todos los pares y el par DOT sigue sincronizándose por syncTodos en el modo --full del workflow y en el modo --cron. syncTodos persiste como baseline `contabilium` el stock completo (guardarSnapshot(snapshotNuevo, undefined, stock), src/sync.js:373,379), incluidos los SKUs no_activado, no_encontrado y error. Ahora procesarSku escribe deltas contra esa baseline (src/sync.js:231-235), así que vuelve el caso que ya se había rechazado. Ejemplo: un SKU no_activado con Contabilium=10 que después se activa con available=0 da nuevoValor 0. Queda como 'sin_cambios' y se marca resuelto sin que el 10 se escriba nunca."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/resultado.test.js y test/workflow.test.js 24/24 en verde. evaluarCorridaMultiPar falla si ningún par activo sincronizó y aplica el caso H3 por par. index.js sale con exit 1 cuando veredicto.ok es false."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/regresion-h3-absoluto.test.js 4/4 en verde. Incluye el camino real ejecutarPar con un espía sobre setearStock: espera quantity=10 (el delta) y no 12 (el absoluto). Fallaría si se vuelve a escribir el absoluto."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/par-isla-pendiente.test.js 8/8 en verde. El par de la isla con placeholder queda pendiente y no llama ninguna dependencia. Se reporta con su motivo, y si todos los pares quedan pendientes la corrida no sale en verde."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/dry-run-multi-par.test.js 3/3 en verde. Con DRY_RUN activo no hay setearStock ni persistencia en ninguno de los dos pares, y planDry informa lo que se habría escrito. Hay control negativo con DRY_RUN apagado."
+    },
+    {
+      "id": "CA-12",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "test/migracion-libreta-legada.test.js 7/7 en verde. correrTodosLosPares migra el legado del DOT antes de la primera escritura y usa esa baseline (delta 10, no 12). index.js importa la función desde sync.js, sin una copia local."
+    },
+    {
+      "id": "CA-13",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174041Z",
+      "motivo": "El atajo incremental y el checkpoint de ejecutarPar están probados (6/6). Pero R-12 exige que la reconciliación completa explícita sea 'por par', y el entrypoint real nunca le pasa `full` a ejecutarPar ni a correrTodosLosPares (src/index.js:131). El input `full` del workflow va a syncTodos({ full: true }) (src/index.js:112-114), que es de un solo depósito, usa la libreta legada y persiste el stock completo como baseline. La reconciliación completa por par que el criterio exceptúa no existe en producción."
+    }
+  ],
+  "hallazgos": [
+    "R-1/CA-1: el par DOT tiene dos líneas base que divergen. El incremental usa .cache/last-sync.dot.json y --full, --cron y --sku usan el legado .cache/last-sync.json. La migración de R-11 corre una sola vez y después el legado solo lo avanza el --full. Entre los dos modos se aplica dos veces el mismo delta sobre Shopify: hay sobreventa o descuento doble.",
+    "R-7/CA-7: syncTodos sigue persistiendo `contabilium = stock` completo, con SKUs no resueltos y no alcanzados (src/sync.js:373,379). Como procesarSku ahora escribe deltas contra esa baseline, el bug que se arregló en ejecutarPar sigue vivo en el camino --full y en --cron del par DOT.",
+    "R-12/CA-13: la reconciliación completa 'por par' no está cableada. index.js manda --full al camino legado de un solo depósito, y ejecutarPar({ full: true }) solo se ejercita en los tests.",
+    "No es un CA, pero conviene registrarlo: ejecutarPar y procesarSku pueden escribir un nuevoValor negativo. test/sync-deltas.test.js documenta -3 y dice que 'el guard de piso vive en procesarSku', pero ese guard no existe en el código."
+  ]
+}

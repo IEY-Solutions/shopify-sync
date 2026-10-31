@@ -9,7 +9,7 @@
 // Corre con: node --test test/
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluarCorrida, UMBRAL_ERROR_DEFECTO } from "../src/resultado.js";
+import { evaluarCorrida, UMBRAL_ERROR_DEFECTO, evaluarCorridaMultiPar } from "../src/resultado.js";
 
 // Resumen con la forma que devuelve syncTodos.
 const resumen = (extra) => ({
@@ -107,4 +107,53 @@ test("el umbral es configurable y se respeta", () => {
   const r = resumen({ total: 100, error: 20, sin_cambios: 80 });
   assert.equal(evaluarCorrida(r, 0.5).ok, true);
   assert.equal(evaluarCorrida(r, 0.1).ok, false);
+});
+
+// -----------------------------------------------------------------------------
+// CA-8 (extension multi-par): R-8 vale para CADA par, y el agregado tampoco
+// puede salir en verde sin que ningun par activo haya hecho nada.
+//
+// INTERFAZ ASUMIDA: evaluarCorridaMultiPar(porPar) en src/resultado.js (no
+// existe hoy). Ver aceptacion/deltas-dot-mas-isla-galerias/DISENO-INTERFAZ.md
+// seccion 6. Estos casos se agregan al final del archivo existente -- nada de
+// lo de arriba se reescribe, porque evaluarCorrida() para UN par ya esta
+// cubierto.
+// -----------------------------------------------------------------------------
+
+test("dos pares con resumenes validos: el agregado pasa y detalla a cada uno", () => {
+  const v = evaluarCorridaMultiPar({
+    dot: resumen({ total: 2562, sin_cambios: 2562 }),
+    "galerias-pacifico": resumen({ total: 300, sin_cambios: 300 }),
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.detalle.dot.ok, true);
+  assert.equal(v.detalle["galerias-pacifico"].ok, true);
+});
+
+test("si un par activo reproduce el caso real de H3, el agregado falla igual que evaluarCorrida solo", () => {
+  const v = evaluarCorridaMultiPar({
+    dot: resumen({ total: 2480, error: 2396 }),
+    "galerias-pacifico": resumen({ total: 300, sin_cambios: 300 }),
+  });
+  assert.equal(v.ok, false, "un par roto no puede quedar tapado por otro que si funciono");
+  assert.equal(v.detalle.dot.ok, false);
+  assert.match(v.detalle.dot.motivo, /2396 de 2480/);
+});
+
+test("el guardarrail de AGENTS.md (prohibido fallar en silencio) vale por par: ninguno tapa al otro", () => {
+  const v = evaluarCorridaMultiPar({
+    dot: resumen({ total: 0 }), // Contabilium no devolvio nada del DOT
+    "galerias-pacifico": resumen({ total: 300, sin_cambios: 300 }),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.detalle.dot.motivo, /no devolvio ningun SKU/);
+});
+
+test("el umbral de evaluarCorridaMultiPar se puede pasar y se aplica a cada par", () => {
+  const porPar = {
+    dot: resumen({ total: 100, error: 20, sin_cambios: 80 }),
+    "galerias-pacifico": resumen({ total: 100, error: 20, sin_cambios: 80 }),
+  };
+  assert.equal(evaluarCorridaMultiPar(porPar, 0.5).ok, true);
+  assert.equal(evaluarCorridaMultiPar(porPar, 0.1).ok, false);
 });

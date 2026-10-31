@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "feature": "deltas-dot-mas-isla-galerias",
+  "fecha": "2026-10-29T18:34:09+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "deca4e9e71983f0dda7cc98aebc16a022f6535e0",
+    "diff_sha256": "c342ff2e48add4ab0e098aedf4526362ce71d2c3f48968f37e8eef66c9107065"
+  },
+  "oraculo_sha256": "e57fda8db05836f70613c4eb78db4d52d0682676e7def89c94060bd6383895f7",
+  "contrato_sha256": "4f0abbdec4df61a1260d0e940f3b00715719c780723ba2d92994cab1b7314d73",
+  "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+  "veredicto": "APRUEBA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/sync-deltas.test.js pasa 6/6 con exit 0. El caso central (baseline=10, Contabilium=10, Shopify=8) da 8, no re-infla. calcularEscritura es la única decisión de escritura: la usan ejecutarPar (src/sync.js:551-567) y procesarSku (src/sync.js:252-273), y las dos pasan nuevoValor a setearStock, nunca el absoluto. La regresión sobre el camino real la cubre CA-9."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/multi-par.test.js pasa 6/6. El caso nuevo corre el ejecutarPar real con dos pares en una sola invocación: cada setearStock lleva el locationId de su propio par y nunca el del otro. pares.js toma los ids del entorno y no hay literales en src/*.js."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/libreta-multi-location.test.js pasa 3/3. rutaSnapshotPara da un archivo por stateKey. Dos pares con baselines distintos para el mismo SKU no se pisan, y escribir la libreta de uno no crea la del otro."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/no-tocar-central.test.js pasa 3/3. El fixture tiene stock bajo un depósito CENTRAL. El ejecutarPar real con DOT e isla nunca llama a getStockDeposito ni a setearStock con el depósito o la location de CENTRAL. construirPares no declara ningún par implícito."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/sku-match.test.js pasa 18/18. Incluye buscarVariantePorSku con la location de la isla (≠ DOT): resuelve el SKU exacto y lee el available de esa location, no el del DOT. Los casos de coincidencia exacta y de escape del sku siguen en verde."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/cantidades-enteras.test.js pasa 4/4. cantidadDeItem trunca los decimales y calcularEscritura redondea tanto el sembrado como el delta, sin distinguir pares."
+    },
+    {
+      "id": "CA-7",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/libreta.test.js + test/orquestacion-pares.test.js pasan 25/25. SNAPSHOT_VERSION=2 sigue vigente. Un SKU no_activado o no_encontrado no queda resuelto ni deja baseline de contabilium, el baseline previo se conserva al desactivarse, y lo que pasa en un par no se cruza al otro. El código coincide (src/sync.js:580-589)."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/resultado.test.js + test/workflow.test.js pasan 24/24. evaluarCorridaMultiPar falla si todos los pares quedan pendientes, si un par activo reproduce H3 o si un par no leyó nada. En src/index.js los modos por defecto y --full hacen process.exit(1) cuando el veredicto no es ok."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/regresion-h3-absoluto.test.js pasa 4/4. El caso nuevo corre el ejecutarPar real (baseline 10, Contabilium 12, Shopify 8) y exige setearStock con quantity=10 y changeFromQuantity=8. Si el código volviera a escribir el absoluto (12), el test falla."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/par-isla-pendiente.test.js pasa 8/8. Sin datos, o con el sentinel PENDIENTE, la isla queda pendiente. ejecutarPar corta antes de llamar a cualquier dependencia (las deps fallan si se las invoca). Si todos los pares quedan pendientes, la corrida no sale en verde."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/dry-run-multi-par.test.js pasa 3/3. Con esDryRun=true ninguno de los dos pares llama a setearStock ni persiste la libreta, y cada uno informa en planDry lo que habría escrito. El control negativo sí escribe. DEPS_REALES incluye esDryRun."
+    },
+    {
+      "id": "CA-12",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/migracion-libreta-legada.test.js pasa 8/8. correrTodosLosPares migra el legado del DOT sin que el test lo invoque a mano, y se usa el baseline migrado (escribe 10, no 12). No pisa una libreta nueva existente y filtra el contabilium que no tiene entrada en skus. index.js importa correrTodosLosPares desde sync.js y no tiene una copia local."
+    },
+    {
+      "id": "CA-13",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T183358Z",
+      "motivo": "test/incremental-checkpoint-multi-par.test.js pasa 6/6. Un SKU sin cambio no llega a resolverSku, salvo con full:true. Los checkpoints intermedios tienen contenido parcial real. Cuando falla el segundo checkpoint, el disco conserva el primero, y el contabilium del checkpoint solo trae los SKUs ya procesados."
+    }
+  ],
+  "hallazgos": [
+    "No bloquea: el test de persistencia de la libreta en syncUnSku (test/sku-individual-usa-libreta-por-par.test.js) no está en el comando de ningún CA y no se corrió en esta evidencia. El código (src/sync.js:316-321) persiste lo resuelto, pero esa regresión no tiene una evidencia mecánica corrida.",
+    "No bloquea: el nombre de un test de test/sync-deltas.test.js dice 'pero no bajo cero', pero el test afirma nuevoValor=-3 y atribuye el piso a procesarSku. Ni procesarSku ni ejecutarPar tienen piso: con deltas se puede mandar a Shopify una cantidad negativa.",
+    "No bloquea: ejecutarPar, el único camino de producción ahora, no llama a detectarAnomalias. La detección de desaparecidos y de puestos en cero que hacía syncTodos ya no corre en producción."
+  ]
+}

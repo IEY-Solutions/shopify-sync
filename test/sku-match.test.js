@@ -177,3 +177,91 @@ test("una variante sin producto no rompe el reporte", () => {
 test("la query pide el producto: sin eso no hay como nombrar el duplicado", () => {
   assert.match(QUERY_POR_SKU, /product\s*\{[^}]*title/s);
 });
+
+// -----------------------------------------------------------------------------
+// Arreglo post-juez (2026-10-29): R-5 para un par que NO es el DOT
+// -----------------------------------------------------------------------------
+// El juez rechazo el cierre de CA-5 porque ningun caso de este archivo pasaba
+// un locationId distinto del de la location DOT (83342655574). El criterio
+// exige que la coincidencia de SKU funcione "para los pares multiples, no
+// solo para el DOT", y los tests de arriba ejercitan elegirVarianteExacta,
+// que ni siquiera recibe locationId (opera sobre los edges ya devueltos).
+//
+// buscarVariantePorSku/resolverSku SI reciben locationId como parametro
+// explicito, sin default (ver src/shopify.js: "locationId es obligatorio, no
+// hay default"), y son las funciones reales que un par no-DOT usa para
+// resolver un SKU. Este bloque mockea globalThis.fetch -- el unico punto de
+// red real de este modulo -- con un fixture que tiene el MISMO sku
+// disponible en DOS locations distintas (DOT e ISLA), con `available`
+// distinto en cada una, y confirma que la resolucion exacta no se confunde
+// de location al pedir la de la isla.
+import { buscarVariantePorSku } from "../src/shopify.js";
+
+test("buscarVariantePorSku resuelve el sku exacto para un par que no es el DOT, sin confundir la location", async (t) => {
+  const LOCATION_DOT = "gid://shopify/Location/83342655574";
+  const LOCATION_ISLA = "gid://shopify/Location/99988877766"; // una location DISTINTA del DOT
+
+  const envPrevio = {
+    SHOPIFY_STORE_DOMAIN: process.env.SHOPIFY_STORE_DOMAIN,
+    SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION,
+    SHOPIFY_CLIENT_ID: process.env.SHOPIFY_CLIENT_ID,
+    SHOPIFY_CLIENT_SECRET: process.env.SHOPIFY_CLIENT_SECRET,
+  };
+  const fetchOriginal = globalThis.fetch;
+
+  t.after(() => {
+    globalThis.fetch = fetchOriginal;
+    for (const [k, v] of Object.entries(envPrevio)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  process.env.SHOPIFY_STORE_DOMAIN = "tienda-fake.myshopify.com";
+  process.env.SHOPIFY_API_VERSION = "2026-04";
+  process.env.SHOPIFY_CLIENT_ID = "id-fake";
+  process.env.SHOPIFY_CLIENT_SECRET = "secret-fake";
+
+  // El mismo sku, con available distinto segun la location consultada --
+  // asi cualquier mezcla de location se detecta por el numero devuelto.
+  const availablePorLocation = { [LOCATION_DOT]: 10, [LOCATION_ISLA]: 4 };
+
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes("/oauth/access_token")) {
+      return { ok: true, json: async () => ({ access_token: "tok-fake", expires_in: 86400 }) };
+    }
+    const body = JSON.parse(opts.body);
+    const locationIdPedido = body.variables.locationId;
+    return {
+      ok: true,
+      json: async () => ({
+        data: {
+          productVariants: {
+            edges: [
+              {
+                node: {
+                  id: "gid://shopify/ProductVariant/1",
+                  sku: "IEY-103-NEGRO",
+                  product: { id: "gid://shopify/Product/1", title: "Funda" },
+                  inventoryItem: {
+                    id: "gid://shopify/InventoryItem/1",
+                    inventoryLevel: {
+                      quantities: [{ name: "available", quantity: availablePorLocation[locationIdPedido] }],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      }),
+    };
+  };
+
+  const resultadoIsla = await buscarVariantePorSku("IEY-103-NEGRO", LOCATION_ISLA);
+  assert.equal(resultadoIsla.inventoryItemId, "gid://shopify/InventoryItem/1");
+  assert.equal(resultadoIsla.available, 4, "con locationId de la isla, tiene que leer el available de LA ISLA");
+
+  const resultadoDot = await buscarVariantePorSku("IEY-103-NEGRO", LOCATION_DOT);
+  assert.equal(resultadoDot.available, 10, "con locationId del DOT, tiene que leer el available del DOT, no el de la isla");
+});

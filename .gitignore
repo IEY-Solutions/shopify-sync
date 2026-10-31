@@ -36,7 +36,11 @@ render-failures.log*
 .claude/settings.local.json
 .claude/skills/contratacion/
 .claude/skills/contrato-especialista/
+.claude/skills/contrato-feature/
 .claude/skills/criterios-cierre/
 .claude/skills/delegacion/
 .claude/skills/descomposicion-tareas/
+.claude/skills/flujo-diseno/
+.claude/skills/intake-diseno/
+.claude/skills/presentacion-colaborativa/
 # arn:fin

@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "feature": "deltas-dot-mas-isla-galerias",
+  "fecha": "2026-10-29T17:59:49+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "deca4e9e71983f0dda7cc98aebc16a022f6535e0",
+    "diff_sha256": "b15a717c1bc14722b8130257470c12ad27832bded5032d08335f78314cb79ed8"
+  },
+  "oraculo_sha256": "e4455d362fa0d94017a0c9ce8ab1c40df659d3f012d837ba375d677e52b9dc5f",
+  "contrato_sha256": "4f0abbdec4df61a1260d0e940f3b00715719c780723ba2d92994cab1b7314d73",
+  "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+  "veredicto": "RECHAZA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "sync-deltas.test.js pasa (6/6), pero solo prueba la función pura calcularEscritura. El código tiene un camino de escritura que re-infla stock, lo contrario de lo que pide R-1. Con DRY_RUN=false, syncUnSku (modo --sku) aplica el delta contra la libreta por-par del DOT y después no la actualiza: procesarSku devuelve el resultado y nadie persiste skus ni contabilium. En la corrida siguiente, ejecutarPar ve que skus[sku] es distinto del valor actual y vuelve a aplicar el mismo delta sobre un Shopify que ya lo tenía. Ejemplo: base 15, Contabilium 17, Shopify 8; --sku escribe 10 y el incremental siguiente escribe 12. Ningún comando de CA-1 ejercita ese camino. test/sku-individual-usa-libreta-por-par.test.js no forma parte de ningún comando del contrato y tampoco cubre la corrida posterior."
+    },
+    {
+      "id": "CA-2",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "multi-par.test.js pasa (5/5), pero la afirmación de que cada par escribe solo en su location se apoya solo en armarPlanDeEscritura. Esa función no la llama ningún camino de producción: grep en src/ muestra que solo se define y se exporta, y ejecutarPar no la usa. Si ejecutarPar mezclara los locationId de los pares, este comando seguiría en verde. El comando de CA-2 no corre dos pares por el camino real de escritura."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "libreta-multi-location.test.js pasa (3/3). Ejercita rutaSnapshotPara, cargarLibretaCompleta y guardarSnapshot, que son las funciones reales que usa ejecutarPar por DEPS_REALES. Cada stateKey tiene su archivo, se guardan bases distintas para el mismo SKU y una no pisa a la otra."
+    },
+    {
+      "id": "CA-4",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "no-tocar-central.test.js pasa (3/3). La parte que alimenta un stock y verifica que no se construye un input de escritura hacia CENTRAL ejercita armarPlanDeEscritura, que es código muerto en producción. El input real se arma en ejecutarPar → setearStock → construirInputSet. Solo el primer caso, sobre construirPares, toca código real, y no recibe ningún stock como pide el criterio."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "sku-match.test.js pasa (18/18). Ahora incluye un caso donde buscarVariantePorSku resuelve el sku exacto para un locationId de la isla distinto del DOT, con un available distinto por location, sin mezclar locations. El resto mantiene la coincidencia exacta y el escapado."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "cantidades-enteras.test.js pasa (4/4). cantidadDeItem trunca los decimales y calcularEscritura siempre devuelve un entero. calcularEscritura sí está en el camino real: su nuevoValor va directo a setearStock en ejecutarPar. La función no distingue pares."
+    },
+    {
+      "id": "CA-7",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "libreta.test.js y orquestacion-pares.test.js pasan (25/25). Cubren SNAPSHOT_VERSION, el aislamiento entre dos pares por ejecutarPar y un SKU no_activado que no deja base y luego se siembra y escribe. También el borde de un SKU desactivado que conserva su base vieja."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "resultado.test.js y workflow.test.js pasan (24/24). evaluarCorridaMultiPar falla si todos los pares quedan pendientes, si un par activo reproduce H3 o si un par activo tiene total=0. index.js usa ese veredicto con process.exit(1) en los modos incremental y --full."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "regresion-h3-absoluto.test.js pasa (4/4). Incluye el camino real: ejecutarPar con base 10, Contabilium 12 y Shopify 8 llama a setearStock con quantity=10 y changeFromQuantity=8. Si volviera a escribir el absoluto, el test fallaría."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "par-isla-pendiente.test.js pasa (8/8). Sin datos o con el valor PENDIENTE, la isla queda marcada como pendiente. ejecutarPar corta antes de llamar a cualquier dependencia (lo verifica un spy que falla si se invoca alguna) y devuelve un motivo que nombra el par. Si todos los pares quedan pendientes, la corrida no sale en verde."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "dry-run-multi-par.test.js pasa (3/3). Con DRY_RUN activo, ninguno de los dos pares llama a setearStock ni persiste la libreta, y planDry informa qué habría escrito y en qué location. El control negativo con DRY_RUN apagado sí escribe."
+    },
+    {
+      "id": "CA-12",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "migracion-libreta-legada.test.js pasa (8/8). correrTodosLosPares migra el archivo legado del DOT sin intervención manual y la escritura usa el delta contra la base migrada. Las entradas de contabilium sin su par en skus se descartan, la migración no pisa una libreta nueva ya existente y la isla no migra. Además, index.js importa correrTodosLosPares desde sync.js y no lo declara localmente."
+    },
+    {
+      "id": "CA-13",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T175939Z",
+      "motivo": "incremental-checkpoint-multi-par.test.js pasa (6/6). Los SKUs sin cambio se saltean sin llamar a resolverSku y full:true los reconsulta. El checkpoint intermedio guarda solo lo procesado hasta ese punto, en skus y en contabilium. Ante una interrupción real, el disco conserva el checkpoint anterior. Los checkpoints de un par no tocan la ruta del otro."
+    }
+  ],
+  "hallazgos": [
+    "CA-1 / R-1: con DRY_RUN=false, syncUnSku (--sku) escribe en Shopify un delta contra la base de .cache/last-sync.dot.json pero no actualiza esa libreta (src/sync.js:287-312 y procesarSku en 215-280). La corrida incremental siguiente de ejecutarPar vuelve a aplicar el mismo delta sobre el valor ya actualizado y re-infla el stock en la location real del DOT. Ningún comando de CA-1 cubre este camino.",
+    "CA-2 / R-2: armarPlanDeEscritura (src/sync.js:194) no se invoca desde ningún camino de producción. ejecutarPar calcula y escribe por su cuenta. La evidencia de que cada par escribe solo en su location se apoya en esa función muerta, así que no detectaría que el loop real use un locationId equivocado.",
+    "CA-4 / R-4: lo mismo vale para no-tocar-central.test.js. Los casos que reciben un stock y verifican el destino de escritura ejercitan armarPlanDeEscritura, no el camino real ejecutarPar → setearStock → construirInputSet."
+  ]
+}

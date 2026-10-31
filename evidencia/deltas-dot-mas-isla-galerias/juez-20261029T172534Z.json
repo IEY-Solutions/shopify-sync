@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "feature": "deltas-dot-mas-isla-galerias",
+  "fecha": "2026-10-29T17:25:34+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "deca4e9e71983f0dda7cc98aebc16a022f6535e0",
+    "diff_sha256": "4c9b0b42a6b961830a4a8fa385a0db0412f1c27a0685e663f044069641859a5e"
+  },
+  "oraculo_sha256": "ea4e7f61bb33d12e8b126dab5a7dbf5bad96a9808bc0328f0a7164aa8d25c870",
+  "contrato_sha256": "4f0abbdec4df61a1260d0e940f3b00715719c780723ba2d92994cab1b7314d73",
+  "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+  "veredicto": "RECHAZA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "sync-deltas.test.js salió con exit 0 (6/6). Con baseline=10, Contabilium=10 y Shopify=8, deja 8 y no re-infla."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "multi-par.test.js pasó 5/5. La escritura real con dos pares en una sola invocación la demuestra orquestacion-pares.test.js caso (a), que corrió en este cierre bajo CA-7: cada par usa su propio locationId y su propio depositoId."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "libreta-multi-location.test.js pasó 3/3. ejecutarPar lee y escribe solo en rutaSnapshotPara(par.stateKey)."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "no-tocar-central.test.js pasó 3/3. construirPares declara solo DOT e isla, y setearStock recibe siempre par.locationId (src/sync.js:516)."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "sku-match.test.js pasó 18/18. Hay un caso con una location de isla distinta del DOT que resuelve el SKU exacto sin confundir la location."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "cantidades-enteras.test.js pasó 4/4. nuevoValor siempre sale entero."
+    },
+    {
+      "id": "CA-7",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "Los tests solo miran `skus`. El baseline `contabilium` se persiste también para los SKU no_activado o no_encontrado (src/sync.js:538, 542). Por ejemplo, un SKU no_activado con Contabilium=10 que después se activa con available=0 da nuevoValor=0. Queda como 'sin_cambios' y se marca resuelto sin que el 10 se escriba nunca."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "resultado y workflow pasaron 24/24. index.js sale con código 1 si el veredicto multi-par no es ok."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "regresion-h3-absoluto pasó 4/4. ejecutarPar escribe 10 (el delta) y no 12 (el absoluto)."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "par-isla-pendiente pasó 8/8. Un par pendiente no llama a ninguna dependencia, y si todos los pares quedan pendientes la corrida no sale ok."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "dry-run-multi-par pasó 3/3. En dry-run no se llama a setearStock ni a guardarSnapshot, y planDry lista lo que se habría escrito."
+    },
+    {
+      "id": "CA-12",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "migracion-libreta-legada pasó 7/7. correrTodosLosPares migra el legado del DOT, e index.js la importa desde sync.js."
+    },
+    {
+      "id": "CA-13",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T172526Z",
+      "motivo": "El checkpoint (src/sync.js:537-538) persiste como baseline el stock completo, incluidos los SKU que todavía no se procesaron. Si la corrida se interrumpe, esos SKU arrancan la siguiente con delta 0 y se marcan resueltos sin escribirse: el trabajo pendiente se pierde para siempre. El test (c-bis) solo lee `skus` del disco."
+    }
+  ],
+  "hallazgos": [
+    "ejecutarPar persiste `contabilium` (la línea base de los deltas) también para los SKU que no se escribieron en Shopify: error, CAS fallido, no_encontrado, no_activado o todavía sin procesar en un checkpoint. Ese delta pendiente se pierde para siempre, y Shopify queda por encima del stock físico, con riesgo de sobreventa (R-1, R-7, R-12).",
+    "Ningún oráculo inspecciona el `contabilium` persistido después de un fallo o de una interrupción.",
+    "Sin bloqueo propio: puede escribirse un nuevoValor negativo. El piso que menciona test/sync-deltas.test.js no existe ni en procesarSku ni en ejecutarPar.",
+    "Sin bloqueo propio: armarPlanDeEscritura no se usa en producción. Los modos --full, --cron y --sku siguen en el camino legado de un solo depósito, y después de la migración las dos libretas del DOT divergen."
+  ]
+}

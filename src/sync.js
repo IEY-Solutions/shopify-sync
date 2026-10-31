@@ -23,7 +23,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // "Libreta" de lo ultimo que confirmamos en Shopify por cada SKU.
 // La usa el sync incremental para saltear SKUs que no cambiaron, sin preguntarle
 // a Shopify uno por uno (ahi estaba el cuello de botella de ~26 min).
-const SNAPSHOT_PATH = join(__dirname, "..", ".cache", "last-sync.json");
+export const SNAPSHOT_PATH = join(__dirname, "..", ".cache", "last-sync.json");
 
 function esDryRun() {
   return String(process.env.DRY_RUN).toLowerCase() !== "false";
@@ -115,16 +115,109 @@ export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH, contabilium = null) 
 const CHECKPOINT_CADA = 200;
 
 // -----------------------------------------------------------------------------
+// rutaSnapshotPara — ruta de la libreta de UN par (R-3)
+// -----------------------------------------------------------------------------
+// Antes habia un solo SNAPSHOT_PATH global; con multi-par cada stateKey tiene
+// su archivo, para que la base de un par nunca se lea ni se pise con la de
+// otro.
+export function rutaSnapshotPara(stateKey, dirCache = join(__dirname, "..", ".cache")) {
+  return join(dirCache, `last-sync.${stateKey}.json`);
+}
+
+// -----------------------------------------------------------------------------
+// migrarLibretaLegada — primera corrida del par DOT tras este deploy: la
+// libreta nueva por-par (rutaSnapshotPara("dot", ...)) no existe todavia,
+// pero el legado SNAPSHOT_PATH (.cache/last-sync.json) si tiene la base real
+// de las corridas anteriores. Sin esto, el primer run del DOT resiembra todo
+// (sembrado:true por SKU) y pierde la deteccion de desaparecidos de una
+// corrida a la otra.
+//   - rutaNueva ya existe (tiene su propio progreso, migrado o generado
+//     organicamente): NO se toca. Nunca se pisa progreso nuevo con el legado.
+//   - rutaNueva no existe y rutaLegada tampoco: no hay nada que migrar
+//     (deploy en un ambiente sin libreta previa, p.ej. CI limpio).
+//   - rutaNueva no existe y rutaLegada si: se copia el contenido crudo tal
+//     cual (mismo __v/schema, no cambia nada mas) y se devuelve true.
+// Devuelve true si migro, false si no hizo nada (en ninguno de los dos casos
+// "false" es un error).
+// CA-12: el `contabilium` legado se grababa con el stock completo de
+// Contabilium, incluidos los SKU que nunca se escribieron de verdad en
+// Shopify (no_encontrado, no_activado, error, ambiguo o todavia no
+// alcanzados por un checkpoint). Una entrada de `contabilium[sku]` solo es
+// confiable si ese mismo SKU tiene tambien entrada en `skus[sku]`: eso es lo
+// unico que certifica una escritura (o un "sin_cambios" ya correcto) real
+// contra Shopify en esa corrida (mismo criterio que usa ejecutarPar al
+// construir snapshotNuevo). El resto se descarta: ese SKU arranca "sembrado"
+// la proxima vez que se resuelva, en vez de heredar un baseline falso (mismo
+// incumplimiento de R-7 que esto reemplaza).
+export function migrarLibretaLegada(rutaLegada, rutaNueva) {
+  if (existsSync(rutaNueva)) return false;
+  if (!existsSync(rutaLegada)) return false;
+  mkdirSync(dirname(rutaNueva), { recursive: true });
+
+  const crudo = JSON.parse(readFileSync(rutaLegada, "utf-8"));
+  const skus = parsearLibreta(crudo) ?? {};
+  const contabilium = parsearSnapshotContabilium(crudo);
+  if (contabilium) {
+    const filtrado = Object.fromEntries(
+      Object.entries(contabilium).filter(([sku]) => Object.prototype.hasOwnProperty.call(skus, sku))
+    );
+    crudo.contabilium = filtrado;
+  }
+
+  writeFileSync(rutaNueva, JSON.stringify(crudo, null, 2), "utf-8");
+  return true;
+}
+
+// -----------------------------------------------------------------------------
+// calcularEscritura — decide que valor escribir en Shopify SIN escribir nada.
+// -----------------------------------------------------------------------------
+// Pura, sin IO (R-1, ADR 0001). NUNCA escribe el absoluto de Contabilium
+// salvo en el caso "sembrado" (no hay baseline: primera vez que se ve el SKU
+// en este par).
+//   baseline          — lo que Contabilium decia en la corrida ANTERIOR para
+//                        este SKU en este par (null si es la primera vez; NO
+//                        confundir con 0, que es un valor real).
+//   contabiliumActual — lo que Contabilium dice AHORA.
+//   shopifyActual      — lo que Shopify tiene AHORA en la location de este par.
+export function calcularEscritura({ baseline, contabiliumActual, shopifyActual }) {
+  if (baseline === null || baseline === undefined) {
+    return { nuevoValor: Math.round(contabiliumActual), delta: null, sembrado: true };
+  }
+  const delta = contabiliumActual - baseline;
+  return { nuevoValor: Math.round(shopifyActual + delta), delta, sembrado: false };
+}
+
+// -----------------------------------------------------------------------------
+// armarPlanDeEscritura — por SKU, calcula la escritura (via calcularEscritura)
+// y la amarra a la location/par que la origino. No llama a Shopify (R-2/R-4).
+// -----------------------------------------------------------------------------
+export function armarPlanDeEscritura(par, stockPorSku, baselinePorSku, shopifyPorSku) {
+  const plan = [];
+  for (const [sku, contabiliumActual] of stockPorSku) {
+    if (!shopifyPorSku.has(sku)) continue; // no encontrado/no activado: no se planea nada
+    const { nuevoValor, delta, sembrado } = calcularEscritura({
+      baseline: baselinePorSku.get(sku) ?? null,
+      contabiliumActual,
+      shopifyActual: shopifyPorSku.get(sku),
+    });
+    plan.push({ sku, par: par.nombre, locationId: par.locationId, nuevoValor, delta, sembrado });
+  }
+  return plan;
+}
+
+// -----------------------------------------------------------------------------
 // procesarSku — sincroniza UN solo SKU contra Shopify
 // -----------------------------------------------------------------------------
-// Recibe el SKU y el stock objetivo (lo que dice Contabilium).
-// Devuelve un string con el resultado, para contar al final.
-async function procesarSku(sku, stockObjetivo) {
+// Recibe el SKU, el stock objetivo (lo que dice Contabilium), el baseline
+// (lo que Contabilium decia la corrida anterior, null si no hay) y el
+// locationId del par al que pertenece. Devuelve un string con el resultado,
+// para contar al final.
+async function procesarSku(sku, stockObjetivo, baseline, locationId = process.env.SHOPIFY_DOT_LOCATION_ID) {
   const dryRun = esDryRun();
 
   let info;
   try {
-    info = await resolverSku(sku);
+    info = await resolverSku(sku, locationId);
   } catch (err) {
     // H4: mas de una variante con el sku exacto. Elegir una seria elegir al azar.
     if (err instanceof SkuAmbiguoError) {
@@ -154,23 +247,31 @@ async function procesarSku(sku, stockObjetivo) {
     return "no_activado";
   }
 
-  // Sin cambios: el stock de Shopify ya coincide con Contabilium
-  if (available === stockObjetivo) {
-    if (esVerboso()) console.log(`  [OK] ${sku}: sin cambios (stock = ${stockObjetivo})`);
+  // R-1/ADR 0001: nunca escribir el absoluto de Contabilium. Se calcula el
+  // delta contra la linea base (null si es la primera vez que se ve el SKU).
+  const { nuevoValor } = calcularEscritura({
+    baseline: baseline ?? null,
+    contabiliumActual: stockObjetivo,
+    shopifyActual: available,
+  });
+
+  // Sin cambios: el stock de Shopify ya coincide con el valor calculado
+  if (available === nuevoValor) {
+    if (esVerboso()) console.log(`  [OK] ${sku}: sin cambios (stock = ${nuevoValor})`);
     return "sin_cambios";
   }
 
   // Hay que actualizar
   if (dryRun) {
     console.log(
-      `  [DRY] ${sku}: actualizaria ${available} -> ${stockObjetivo} (no se escribe, DRY_RUN=true)`
+      `  [DRY] ${sku}: actualizaria ${available} -> ${nuevoValor} (no se escribe, DRY_RUN=true)`
     );
     return "dry";
   }
 
   try {
-    await setearStock(inventoryItemId, stockObjetivo, available);
-    console.log(`  [SET] ${sku}: ${available} -> ${stockObjetivo} (actualizado en Shopify)`);
+    await setearStock(inventoryItemId, nuevoValor, available, locationId);
+    console.log(`  [SET] ${sku}: ${available} -> ${nuevoValor} (actualizado en Shopify)`);
     return "actualizado";
   } catch (err) {
     console.error(`  [ERROR] ${sku}: fallo al escribir en Shopify -> ${err.message}`);
@@ -201,7 +302,23 @@ export async function syncUnSku(sku, manualQty = null) {
     console.log(`[Contabilium] Stock DOT de ${skuNorm} = ${objetivo}`);
   }
 
-  await procesarSku(skuNorm, objetivo);
+  // R-11: el DOT ya no vive en el SNAPSHOT_PATH legado, sino en su libreta
+  // por-par. Leer el legado aca reintroduce el bug de CA-1: con DRY_RUN=false
+  // escribiria contra una base que ya no avanza desde la migracion.
+  const ruta = rutaSnapshotPara("dot");
+  const libreta = cargarLibretaCompleta(ruta);
+  const baseline = libreta.contabilium?.[skuNorm] ?? null;
+  const resultado = await procesarSku(skuNorm, objetivo, baseline);
+
+  // CA-1: igual que ejecutarPar, solo se anota lo REALMENTE sincronizado en
+  // Shopify (R-7). Sin esto, la corrida siguiente vuelve a ver un baseline
+  // viejo y reaplica el mismo delta sobre un Shopify que ya lo tenia.
+  if (resultado === "actualizado" || resultado === "sin_cambios") {
+    const snapshotNuevo = { ...libreta.skus, [skuNorm]: objetivo };
+    const contabiliumNuevo = new Map(Object.entries(libreta.contabilium ?? {}));
+    contabiliumNuevo.set(skuNorm, objetivo);
+    guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo);
+  }
   console.log(`=== Fin ===\n`);
 }
 
@@ -266,7 +383,8 @@ export async function syncTodos({ full = false } = {}) {
       continue;
     }
 
-    const resultado = await procesarSku(sku, cantidad);
+    const baseline = libreta.contabilium?.[sku] ?? null;
+    const resultado = await procesarSku(sku, cantidad, baseline);
     contadores[resultado] = (contadores[resultado] ?? 0) + 1;
 
     // H5: solo se anota lo que quedo REALMENTE sincronizado en Shopify.
@@ -323,4 +441,178 @@ export async function syncTodos({ full = false } = {}) {
     desaparecidos: anomalias.desaparecidos.length,
     puestos_en_cero: anomalias.puestosEnCero.length,
   };
+}
+
+// -----------------------------------------------------------------------------
+// ejecutarPar — orquesta UN par de punta a punta: Contabilium -> Shopify -> libreta.
+// -----------------------------------------------------------------------------
+// Nunca lee ni escribe nada fuera del depositoId/locationId de ESTE par (R-2,
+// R-3, R-4). Un par `pendiente` (R-9) corta ANTES de llamar cualquier
+// dependencia: esa es la primera linea de la funcion, no una rama entre varias.
+const DEPS_REALES = {
+  getStockDeposito,
+  resolverSku,
+  setearStock,
+  cargarLibretaCompleta,
+  guardarSnapshot,
+  rutaSnapshotPara,
+  esDryRun,
+  SNAPSHOT_PATH,
+  migrarLibretaLegada,
+};
+
+export async function ejecutarPar(par, deps = DEPS_REALES, { full = false, checkpointCada = CHECKPOINT_CADA } = {}) {
+  if (par.pendiente) {
+    return { pendiente: true, motivo: `par "${par.nombre}": depositoId/locationId sin confirmar` };
+  }
+
+  // Nota: la libreta se lee ANTES de awaitear getStockDeposito a proposito.
+  // Varios tests de este repo (patron conDirTemporal) hacen IO sincronica de
+  // seteo sobre un directorio temporal y lo borran en un `finally` que corre
+  // tan pronto el primer `await` de esta funcion le devuelve el control al
+  // caller -- si la lectura de la libreta quedara detras de un `await`,
+  // llegaria tarde: el directorio ya podria estar borrado.
+  const ruta = deps.rutaSnapshotPara(par.stateKey);
+  const libreta = deps.cargarLibretaCompleta(ruta);
+  const stock = await deps.getStockDeposito(par.depositoId);
+
+  const snapshotPrevio = libreta.skus;
+  const snapshotNuevo = { ...snapshotPrevio };
+  const planDry = [];
+
+  // H3/R-13: el baseline de `contabilium` solo avanza para SKUs REALMENTE
+  // resueltos en esta pasada (actualizado/sin_cambios/dry). Un SKU no
+  // alcanzado todavia (interrupcion) o resuelto como no_encontrado,
+  // no_activado, ambiguo o error conserva su baseline previo intacto --
+  // nunca se le asigna uno nuevo a partir del valor de Contabilium que
+  // todavia no se escribio de verdad.
+  const contabiliumNuevo = new Map(Object.entries(libreta.contabilium ?? {}));
+
+  const contadores = {
+    actualizado: 0,
+    dry: 0,
+    sin_cambios: 0,
+    no_encontrado: 0,
+    no_activado: 0,
+    error: 0,
+    ambiguo: 0,
+    no_sincronizable: 0,
+    saltado: 0,
+  };
+
+  let procesados = 0;
+
+  for (const [sku, cantidad] of stock) {
+    if (esNoSincronizable(sku)) {
+      contadores.no_sincronizable++;
+      continue;
+    }
+
+    if (!full && snapshotPrevio[sku] === cantidad) {
+      // CA-1: el atajo incremental no es una categoria aparte de "sin
+      // cambios" -- es la MISMA conclusion (Contabilium no cambio desde la
+      // ultima vez que se confirmo contra Shopify), llegada sin pagar el
+      // costo de una consulta a Shopify. Si solo contara como "saltado", una
+      // corrida que escribio por otra vía (p.ej. syncUnSku) y deja la
+      // libreta ya al dia se reportaria con sin_cambios=0 en la corrida
+      // siguiente, aunque no haya nada pendiente ni se haya reescrito nada.
+      contadores.saltado++;
+      contadores.sin_cambios++;
+      continue;
+    }
+
+    const baseline = libreta.contabilium?.[sku] ?? null;
+
+    let info;
+    let resultado;
+    try {
+      info = await deps.resolverSku(sku, par.locationId);
+    } catch (err) {
+      if (err instanceof SkuAmbiguoError) {
+        console.warn(`  [SKIP] ${par.nombre}/${sku}: ${err.message} -> no se escribe`);
+        for (const linea of err.detalle()) console.warn(linea);
+        resultado = "ambiguo";
+      } else {
+        console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al consultar Shopify -> ${err.message}`);
+        resultado = "error";
+      }
+      info = null;
+    }
+
+    if (resultado === undefined) {
+      if (!info) {
+        console.warn(`  [SKIP] ${par.nombre}/${sku}: no existe en Shopify`);
+        resultado = "no_encontrado";
+      } else if (info.available === null) {
+        console.warn(`  [SKIP] ${par.nombre}/${sku}: el item no esta activado en esa location`);
+        resultado = "no_activado";
+      } else {
+        const { inventoryItemId, available } = info;
+        const { nuevoValor } = calcularEscritura({
+          baseline,
+          contabiliumActual: cantidad,
+          shopifyActual: available,
+        });
+
+        if (available === nuevoValor) {
+          resultado = "sin_cambios";
+        } else if (deps.esDryRun ? deps.esDryRun() : false) {
+          planDry.push({ sku, par: par.nombre, locationId: par.locationId, actual: available, nuevoValor });
+          console.log(
+            `  [DRY] ${par.nombre}/${sku}: actualizaria ${available} -> ${nuevoValor} (no se escribe, DRY_RUN=true)`
+          );
+          resultado = "dry";
+        } else {
+          try {
+            await deps.setearStock(inventoryItemId, nuevoValor, available, par.locationId);
+            console.log(`  [SET] ${par.nombre}/${sku}: ${available} -> ${nuevoValor}`);
+            resultado = "actualizado";
+          } catch (err) {
+            console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al escribir en Shopify -> ${err.message}`);
+            resultado = "error";
+          }
+        }
+      }
+    }
+
+    contadores[resultado] = (contadores[resultado] ?? 0) + 1;
+
+    // H5: solo se anota lo REALMENTE sincronizado en Shopify (R-7).
+    if (resultado === "actualizado" || resultado === "sin_cambios") {
+      snapshotNuevo[sku] = cantidad;
+    } else if (snapshotNuevo[sku] !== undefined) {
+      delete snapshotNuevo[sku];
+    }
+
+    if (resultado === "actualizado" || resultado === "sin_cambios" || resultado === "dry") {
+      contabiliumNuevo.set(sku, cantidad);
+    }
+
+    procesados++;
+    if (!(deps.esDryRun ? deps.esDryRun() : false) && procesados % checkpointCada === 0) {
+      deps.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo);
+    }
+  }
+
+  if (!(deps.esDryRun ? deps.esDryRun() : false)) deps.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo);
+
+  return { ...contadores, total: stock.size, planDry };
+}
+
+// -----------------------------------------------------------------------------
+// correrTodosLosPares — orquesta ejecutarPar() para cada par declarado en la
+// configuracion (R-2). Antes de arrancar con el par "dot", migra su libreta
+// legada (R-11) si corresponde. Devuelve { [stateKey]: resumen }.
+// -----------------------------------------------------------------------------
+export async function correrTodosLosPares(pares, deps = DEPS_REALES, opciones = {}) {
+  const parDot = pares.find((p) => p.stateKey === "dot");
+  if (parDot) {
+    deps.migrarLibretaLegada(deps.SNAPSHOT_PATH, deps.rutaSnapshotPara(parDot.stateKey));
+  }
+
+  const porPar = {};
+  for (const par of pares) {
+    porPar[par.stateKey] = await ejecutarPar(par, deps, opciones);
+  }
+  return porPar;
 }

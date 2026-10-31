@@ -1,3 +1,5 @@
+test: npm test
+
 # Reglas del proyecto — iey-shopify-sync
 
 Middleware que sincroniza el stock del depósito **LOCAL DOT BAIRES** de Contabilium (id `127356`)

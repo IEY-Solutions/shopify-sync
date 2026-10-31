@@ -273,8 +273,10 @@ export function elegirVarianteExacta(edges, sku) {
   return exactos[0];
 }
 
-export async function buscarVariantePorSku(sku) {
-  const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
+export async function buscarVariantePorSku(sku, locationId) {
+  if (!locationId) {
+    throw new Error(`buscarVariantePorSku(${sku}): locationId es obligatorio, no hay default`);
+  }
   const data = await shopifyGraphQL(QUERY_POR_SKU, {
     query: `sku:"${escaparValorBusqueda(sku)}"`,
     locationId,
@@ -312,8 +314,10 @@ const QUERY_NIVEL = `
   }
 `;
 
-export async function leerStockActual(inventoryItemId) {
-  const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
+export async function leerStockActual(inventoryItemId, locationId) {
+  if (!locationId) {
+    throw new Error(`leerStockActual(${inventoryItemId}): locationId es obligatorio, no hay default`);
+  }
   const data = await shopifyGraphQL(QUERY_NIVEL, { id: inventoryItemId, locationId });
   const nivel = data?.inventoryItem?.inventoryLevel;
   return nivel?.quantities?.find((q) => q.name === "available")?.quantity ?? null;
@@ -323,18 +327,21 @@ export async function leerStockActual(inventoryItemId) {
 // resolverInventoryItemId — usa cache, consulta Shopify solo si hace falta
 // -----------------------------------------------------------------------------
 // Devuelve { inventoryItemId, available } o null si el SKU no existe en Shopify.
-export async function resolverSku(sku) {
+export async function resolverSku(sku, locationId) {
+  if (!locationId) {
+    throw new Error(`resolverSku(${sku}): locationId es obligatorio, no hay default`);
+  }
   const c = cargarCache();
   const cacheado = c[sku];
 
   if (cacheado) {
     // Ya conocemos el id: solo leemos el stock actual (mas barato).
-    const available = await leerStockActual(cacheado);
+    const available = await leerStockActual(cacheado, locationId);
     return { inventoryItemId: cacheado, available, desdeCache: true };
   }
 
   // Primera vez: query completa por SKU y guardamos el id en cache.
-  const resultado = await buscarVariantePorSku(sku);
+  const resultado = await buscarVariantePorSku(sku, locationId);
   if (!resultado) return null;
 
   c[sku] = resultado.inventoryItemId;
@@ -388,8 +395,10 @@ export function construirInputSet({ inventoryItemId, locationId, quantity, chang
   };
 }
 
-export async function setearStock(inventoryItemId, quantity, changeFromQuantity) {
-  const locationId = process.env.SHOPIFY_DOT_LOCATION_ID;
+export async function setearStock(inventoryItemId, quantity, changeFromQuantity, locationId) {
+  if (!locationId) {
+    throw new Error(`setearStock(${inventoryItemId}): locationId es obligatorio, no hay default`);
+  }
   const input = construirInputSet({ inventoryItemId, locationId, quantity, changeFromQuantity });
 
   // Clave por intento logico. El reintento interno de shopifyGraphQL reusa las

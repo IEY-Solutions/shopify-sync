@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "feature": "deltas-dot-mas-isla-galerias",
+  "fecha": "2026-10-29T17:47:13+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "deca4e9e71983f0dda7cc98aebc16a022f6535e0",
+    "diff_sha256": "339581f15bfdc964ff222c3c4750afae2e9920652f23fb49ca5b1a5207bf86fb"
+  },
+  "oraculo_sha256": "1b5e7cca1196b390b4bcd4b38877115f405287a04f85334ce0ce0186412dedc2",
+  "contrato_sha256": "4f0abbdec4df61a1260d0e940f3b00715719c780723ba2d92994cab1b7314d73",
+  "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+  "veredicto": "RECHAZA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/sync-deltas.test.js pasa (6/6), pero R-1 no se cumple en todos los caminos que escriben sobre el DOT. El modo `--sku` (src/index.js:61-71 → syncUnSku, src/sync.js:284-286) sigue tomando la línea base de la libreta legada .cache/last-sync.json (cargarLibretaCompleta() sin ruta). Desde la migración, ese archivo ya no avanza: la base durable del DOT ahora vive en last-sync.dot.json. Entonces syncUnSku calcula el delta contra una base vieja: si Contabilium bajó entre corridas, ese descuento se vuelve a aplicar encima de un Shopify que ya lo tenía. Con DRY_RUN=false eso escribe en la location real. Además, ese camino nunca avanza la base. El test de CA-1 solo prueba calcularEscritura y no cubre este camino."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/multi-par.test.js en verde (5/5). construirPares lee depósito y location de env, sin literales en src/pares.js. armarPlanDeEscritura amarra cada ítem al locationId de su par. orquestacion-pares.test.js lo confirma por ejecutarPar con dos pares."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/libreta-multi-location.test.js en verde (3/3). rutaSnapshotPara da un archivo por stateKey, y dos pares en la misma invocación no se pisan la libreta, contra IO real en un directorio temporal."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/no-tocar-central.test.js en verde (3/3). Solo existen los pares declarados, el plan lleva siempre el locationId de su par, y un locationId null no se rellena con otro valor."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/sku-match.test.js en verde (18/18). Incluye un caso nuevo que llama a buscarVariantePorSku con una location distinta del DOT y verifica que el available leído corresponde a esa location, con coincidencia exacta de SKU."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/cantidades-enteras.test.js en verde (4/4). cantidadDeItem trunca y calcularEscritura redondea tanto el valor sembrado como el delta. No depende del par."
+    },
+    {
+      "id": "CA-7",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/libreta.test.js + test/orquestacion-pares.test.js en verde (25/25). Dentro de ejecutarPar, un no_activado o no_encontrado no queda en `skus` y no avanza la base `contabilium`, con dos pares y dos corridas sucesivas. El defecto de R-7 que entra por la migración se imputa a CA-12."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/resultado.test.js + test/workflow.test.js en verde (24/24). evaluarCorridaMultiPar falla si todos los pares quedan pendientes o si algún par activo falla. src/index.js, en los modos por defecto y --full, sale con exit 1 cuando el veredicto no es ok."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/regresion-h3-absoluto.test.js en verde (4/4). Incluye el caso por el camino real (ejecutarPar → setearStock espía), que exige quantity=10 (delta) y no 12 (absoluto): fallaría si se volviera a escribir el absoluto."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/par-isla-pendiente.test.js en verde (8/8). Con el valor centinela o sin datos, el par queda pendiente. ejecutarPar corta antes de cualquier dependencia (spy que explota), se reporta [PENDIENTE] y la corrida no sale en verde si todos los pares están pendientes."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/dry-run-multi-par.test.js en verde (3/3). Con esDryRun=true ningún par llama a setearStock ni a guardarSnapshot y planDry reporta lo que se habría escrito. Hay control negativo. DEPS_REALES incluye esDryRun."
+    },
+    {
+      "id": "CA-12",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/migracion-libreta-legada.test.js pasa (7/7), pero migrarLibretaLegada copia tal cual el campo `contabilium` legado. syncTodos lo grababa con el stock completo de Contabilium (guardarSnapshot(snapshotNuevo, undefined, stock), src/sync.js:373,379), incluidos los SKU no_encontrado, no_activado, error o ambiguo y los que un checkpoint todavía no había alcanzado. Después de migrar, esos SKU heredan como base un valor que nunca se escribió en Shopify. Cuando se activan o se crean con available=0 y Contabilium sigue igual, el delta da 0: quedan 'sin_cambios' y se marcan resueltos sin escribirse. Es el mismo incumplimiento de R-7 que se corrigió en ejecutarPar, ahora reintroducido para el DOT por la migración de R-11. El test no cubre ese caso."
+    },
+    {
+      "id": "CA-13",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T174704Z",
+      "motivo": "test/incremental-checkpoint-multi-par.test.js en verde (6/6). El atajo incremental saltea sin llamar a resolverSku y full:true reconsulta todo. El checkpoint periódico se verifica por su contenido parcial y en disco tras una interrupción real, la base `contabilium` solo incluye los SKU procesados, y cada par usa solo su ruta."
+    }
+  ],
+  "hallazgos": [
+    "CA-1/R-1: syncUnSku (modo --sku, que puede escribir con DRY_RUN=false) sigue usando como base del DOT la libreta legada .cache/last-sync.json, que ya no avanza tras la migración. Calcula deltas contra una base vieja, puede aplicar dos veces un descuento y nunca persiste la base. Es un camino de escritura del DOT fuera de correrTodosLosPares/ejecutarPar.",
+    "CA-12/R-11 (con impacto en R-7): la migración copia sin filtrar la base `contabilium` legada, que incluye el stock completo de Contabilium y no solo los SKU confirmados en Shopify. Los SKU que estaban sin resolver o sin alcanzar en la libreta legada quedan con una base envenenada: al resolverse más tarde se marcan resueltos con delta 0 sin que su stock se escriba nunca.",
+    "Observación, sin CA asignado: calcularEscritura puede devolver valores negativos. test/sync-deltas.test.js dice que 'el guard de piso vive en procesarSku', pero ni procesarSku ni ejecutarPar tienen ese guard."
+  ]
+}

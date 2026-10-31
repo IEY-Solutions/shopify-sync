@@ -60,3 +60,43 @@ export function evaluarCorrida(resumen, umbral = UMBRAL_ERROR_DEFECTO) {
 
   return { ok: true, motivo: null };
 }
+
+// -----------------------------------------------------------------------------
+// evaluarCorridaMultiPar — agrega el veredicto de evaluarCorrida() por cada par
+// -----------------------------------------------------------------------------
+// Un par `pendiente` (R-9) se reporta pero NO se exige que haya sincronizado
+// nada: no es un fallo que el par de la isla este pendiente. Pero si TODOS los
+// pares terminan pendientes (o en error), la corrida entera no puede salir en
+// verde: nunca "no hice nada en ningun lado" == exito (mismo principio de H3).
+//   porPar: { [stateKey]: resumenDeSyncTodos | { pendiente: true, motivo } }
+// Devuelve { ok, motivo, detalle: { [stateKey]: { ok, motivo, pendiente } } }
+export function evaluarCorridaMultiPar(porPar, umbral = UMBRAL_ERROR_DEFECTO) {
+  const detalle = {};
+  let algunoActivo = false;
+  let todosOk = true;
+
+  for (const [stateKey, resumen] of Object.entries(porPar ?? {})) {
+    if (resumen && resumen.pendiente) {
+      detalle[stateKey] = { pendiente: true, motivo: resumen.motivo ?? `par "${stateKey}" pendiente` };
+      continue;
+    }
+    algunoActivo = true;
+    const v = evaluarCorrida(resumen, umbral);
+    detalle[stateKey] = { ok: v.ok, motivo: v.motivo, pendiente: false };
+    if (!v.ok) todosOk = false;
+  }
+
+  if (!algunoActivo) {
+    return {
+      ok: false,
+      motivo: "todos los pares quedaron pendientes: ninguno sincronizo nada en esta corrida",
+      detalle,
+    };
+  }
+
+  if (!todosOk) {
+    return { ok: false, motivo: "al menos un par activo no pudo sincronizar correctamente", detalle };
+  }
+
+  return { ok: true, motivo: null, detalle };
+}

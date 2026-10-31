@@ -12,8 +12,9 @@
 
 import "dotenv/config"; // carga las variables del .env (requisito 2)
 import cron from "node-cron";
-import { syncUnSku, syncTodos } from "./sync.js";
-import { evaluarCorrida, UMBRAL_ERROR_DEFECTO } from "./resultado.js";
+import { syncUnSku, correrTodosLosPares } from "./sync.js";
+import { evaluarCorridaMultiPar, UMBRAL_ERROR_DEFECTO } from "./resultado.js";
+import { construirPares } from "./pares.js";
 
 // --- Parseo simple de argumentos de linea de comandos ---
 const args = process.argv.slice(2);
@@ -80,14 +81,14 @@ else if (esCron) {
   // mas que el intervalo. Si ya hay una en curso, salteamos el tick.
   let corriendo = false;
 
-  async function correr(opciones) {
+  async function correr() {
     if (corriendo) {
       console.warn("[Cron] Corrida anterior aun en curso, salteando este tick.");
       return;
     }
     corriendo = true;
     try {
-      await syncTodos(opciones);
+      await correrTodosLosPares(construirPares(process.env));
     } catch (err) {
       // Un fallo NO debe matar el cron: logueamos y esperamos el proximo tick.
       console.error(`[Cron][ERROR] ${err.message}`);
@@ -96,23 +97,48 @@ else if (esCron) {
     }
   }
 
-  cron.schedule("*/1 * * * *", () => correr({ full: false })); // incremental cada minuto
+  cron.schedule("*/1 * * * *", () => correr()); // incremental cada minuto
   // Reconciliacion completa diaria: DESACTIVADA por ahora. Mientras no exista el
   // flujo inverso (ventas DOT -> Contabilium), un --full podria re-inflar en
   // Shopify stock ya vendido online desde DOT. Reactivar cuando ese flujo exista.
-  // cron.schedule("0 4 * * *", () => correr({ full: true }));
-  correr({ full: false }); // primera incremental inmediata
+  // cron.schedule("0 4 * * *", () => correrTodosLosPares(construirPares(process.env), DEPS_REALES, { full: true }));
+  correr(); // primera incremental inmediata
 }
 
-// --- Modo 3: sync una sola vez (incremental por default, completo con --full) ---
-else {
+// --- Modo 3: reconciliacion completa, multi-par (R-2/R-9/R-12) ---
+// --full fuerza full:true en TODOS los pares declarados via el mismo camino
+// que el modo por defecto (correrTodosLosPares/ejecutarPar), no el legado
+// syncTodos de un solo deposito.
+else if (esFull) {
+  const UMBRAL_ERROR = Number(process.env.UMBRAL_ERROR ?? String(UMBRAL_ERROR_DEFECTO));
+  correrTodosLosPares(construirPares(process.env), undefined, { full: true })
+    .then((porPar) => {
+      const veredicto = evaluarCorridaMultiPar(porPar, UMBRAL_ERROR);
+      for (const [stateKey, d] of Object.entries(veredicto.detalle)) {
+        if (d.pendiente) console.warn(`[PENDIENTE] par "${stateKey}": ${d.motivo}`);
+        else if (!d.ok) console.error(`[FALLO] par "${stateKey}": ${d.motivo}`);
+      }
+      if (!veredicto.ok) {
+        console.error(`[FALLO] ${veredicto.motivo}`);
+        process.exit(1);
+      }
+    })
+    .catch((err) => {
+      console.error(`[FATAL] ${err.message}`);
+      process.exit(1);
+    });
+} else {
   // El guardarrail vive en resultado.js para poder testearlo sin ejecutar este
   // archivo (que corre al importarse). Ver test/resultado.test.js.
   const UMBRAL_ERROR = Number(process.env.UMBRAL_ERROR ?? String(UMBRAL_ERROR_DEFECTO));
 
-  syncTodos({ full: esFull })
-    .then((r) => {
-      const veredicto = evaluarCorrida(r, UMBRAL_ERROR);
+  correrTodosLosPares(construirPares(process.env))
+    .then((porPar) => {
+      const veredicto = evaluarCorridaMultiPar(porPar, UMBRAL_ERROR);
+      for (const [stateKey, d] of Object.entries(veredicto.detalle)) {
+        if (d.pendiente) console.warn(`[PENDIENTE] par "${stateKey}": ${d.motivo}`);
+        else if (!d.ok) console.error(`[FALLO] par "${stateKey}": ${d.motivo}`);
+      }
       if (!veredicto.ok) {
         console.error(`[FALLO] ${veredicto.motivo}`);
         process.exit(1);

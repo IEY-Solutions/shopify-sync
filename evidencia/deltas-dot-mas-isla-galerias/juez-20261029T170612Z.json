@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "feature": "deltas-dot-mas-isla-galerias",
+  "fecha": "2026-10-29T17:06:12+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "deca4e9e71983f0dda7cc98aebc16a022f6535e0",
+    "diff_sha256": "a0a710a56921f19af86d93ccba1a05d9dd53cbf03ede18b15e32652a1d81baaf"
+  },
+  "oraculo_sha256": "053864565722a5ae1c645875b1a50d45d237db38d6950136370eafc85a86e623",
+  "contrato_sha256": "2be2a296f1384bf240d66056fc6d255e0e1fd814df81388ba2f3a172bee2ed99",
+  "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+  "veredicto": "RECHAZA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/sync-deltas.test.js terminó con exit 0 y 6/6 tests en verde. El test 'sin cambios en Contabilium y Shopify ya descontado por una venta web: NO re-infla' arma el escenario que pide el criterio (baseline=10, Contabilium=10, Shopify=8) y comprueba que el valor escrito sea 8."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/multi-par.test.js terminó con exit 0 y 5/5 en verde. Corre dos pares de fixture en una sola invocación. El plan de cada par lleva solo su propio locationId, y los ids salen de env a través de construirPares."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/libreta-multi-location.test.js terminó con exit 0 y 3/3 en verde. rutaSnapshotPara da una ruta distinta por stateKey, y dos pares con baselines distintos para el mismo SKU no se pisan ni crean el archivo del otro."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/no-tocar-central.test.js terminó con exit 0 y 3/3 en verde. El plan siempre lleva el locationId del par declarado. Nunca aparece un tercer par implícito ni un default hacia CENTRAL."
+    },
+    {
+      "id": "CA-5",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "test/sku-match.test.js pasa (17/17), pero no se tocó en esta feature. Así lo dice aceptacion/deltas-dot-mas-isla-galerias/README.md y lo confirma el diff, donde el archivo no aparece. Ningún caso ejercita un par distinto del DOT: el test 'solo se escribe la location DOT' fija la location 83342655574. El criterio exige que los tests pasen 'para los pares multiples, no solo para el DOT', y la evidencia citada no lo demuestra."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/cantidades-enteras.test.js terminó con exit 0 y 4/4 en verde. Entran decimales tanto por cantidadDeItem como por calcularEscritura y la cantidad resultante es siempre entera. calcularEscritura no distingue pares."
+    },
+    {
+      "id": "CA-7",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "test/libreta.test.js pasa (20/20), pero sigue igual que antes: el README lo reconoce ('sin cambios') y el archivo no figura en el diff. Ninguno de los 20 tests corre más de un par. El criterio pide que esos tests 'siguen pasando extendidos a mas de un par', y esa extensión no está en el comando ni en la evidencia. El README dice que la cobertura de dos pares está en test/orquestacion-pares.test.js, pero ese archivo no es el comando de CA-7 y no se corrió en este cierre."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/resultado.test.js test/workflow.test.js terminó con exit 0 y 24/24 en verde. evaluarCorridaMultiPar falla si todos los pares quedan pendientes y cuando un par activo no verifica nada, y un par roto no queda tapado por otro sano."
+    },
+    {
+      "id": "CA-9",
+      "cumple": false,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "test/regresion-h3-absoluto.test.js pasa (3/3), pero solo ejercita la función pura calcularEscritura y cargarLibretaCompleta. Si procesarSku o ejecutarPar volvieran a escribir el absoluto de Contabilium (setearStock con stockObjetivo/cantidad, el comportamiento anterior de src/sync.js:172), los tres casos seguirían en verde. El criterio exige que el test 'falla si el codigo vuelve al comportamiento anterior', y este no lo hace."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/par-isla-pendiente.test.js terminó con exit 0 y 8/8 en verde. Con el sentinel o sin datos, el par de la isla queda pendiente. ejecutarPar corta antes de llamar a cualquier dependencia, y una corrida donde todos los pares quedan pendientes no sale en verde."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/dry-run-multi-par.test.js terminó con exit 0 y 3/3 en verde. Con DRY_RUN activo, ningún par llama a setearStock ni a guardarSnapshot, y planDry detalla lo que se habría escrito por par. El control negativo confirma que sin DRY_RUN sí se escribe."
+    },
+    {
+      "id": "CA-12",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/migracion-libreta-legada.test.js terminó con exit 0 y 7/7 en verde. correrTodosLosPares migra el legado del DOT sin que el test llame a la migración a mano, y el valor escrito sale del delta contra el baseline migrado (10, no 12). index.js importa correrTodosLosPares desde sync.js y no lo declara local."
+    },
+    {
+      "id": "CA-13",
+      "cumple": true,
+      "evidencia_id": "deltas-dot-mas-isla-galerias/20261029T170357Z",
+      "motivo": "node --test test/incremental-checkpoint-multi-par.test.js terminó con exit 0 y 5/5 en verde. Saltea los SKUs sin cambio sin llamar a resolverSku, salvo con full:true. Persiste checkpoints intermedios con contenido parcial correcto, y tras un fallo de IO el disco conserva el checkpoint anterior."
+    }
+  ],
+  "hallazgos": [
+    "CA-5: test/sku-match.test.js no tiene ningún caso para un par distinto del DOT. La evidencia no muestra que la coincidencia de SKU pase 'para los pares multiples'.",
+    "CA-7: test/libreta.test.js no está extendido a más de un par, que es lo que dice el texto del criterio. La cobertura de dos pares que el README le adjudica a test/orquestacion-pares.test.js no forma parte del comando de CA-7 y no tiene evidencia en este cierre.",
+    "CA-9: el test de regresión no falla si vuelve la escritura del absoluto en procesarSku/ejecutarPar, porque solo prueba calcularEscritura aislada.",
+    "Riesgo sobre R-1/R-7/R-12, fuera de los comandos: en ejecutarPar, cada checkpoint y el guardado final llaman a guardarSnapshot(snapshotNuevo, ruta, stock) con el mapa de Contabilium completo. Así la línea base (libreta.contabilium) avanza también para los SKUs con error, no_encontrado, no_activado o ambiguo, y para los que todavía no se procesaron cuando la corrida se interrumpe. En la pasada siguiente el delta pendiente da 0 y la venta por mostrador no llega a Shopify (sobreventa). El caso (c-bis) de CA-13 solo mira libreta.skus, no libreta.contabilium.",
+    "Riesgo fuera de los comandos: los modos --cron (syncTodos), --full (syncTodos({ full: true })) y --sku (syncUnSku) de src/index.js siguen usando la libreta legada .cache/last-sync.json como baseline. El modo por defecto usa .cache/last-sync.dot.json. Después de la migración hay dos líneas base divergentes para la misma location DOT, y alternar modos aplica dos veces deltas ya aplicados. syncUnSku además nunca avanza el baseline, así que repetirlo vuelve a aplicar el mismo delta en cada invocación.",
+    "Riesgo fuera de los comandos: no hay ningún piso en cero para nuevoValor, ni en ejecutarPar ni en procesarSku. Eso contradice el comentario de test/sync-deltas.test.js, que dice que 'el guard de piso vive en procesarSku'. Un delta negativo puede escribir stock negativo en Shopify."
+  ]
+}
