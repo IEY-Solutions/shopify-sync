@@ -44,6 +44,12 @@ sin verificar y admitía tres respuestas incompatibles.
   Fulfillment* que, apuntado al DOT, invertiría la semántica sin que nadie toque código.
 - `causa_desconocida` es **métrica agregada, nunca alerta por SKU**: la reposición manual del DOT
   genera ~2,6 eventos normales por día.
+  - **Adenda del 02/11/2026** (`docs/contratos/verificar-cache-sku.md`, R-2): la línea
+    `[AVISO] <par>/<sku>: N variantes …` de SKUs duplicados en Shopify es una **alerta de
+    catálogo**, no de causa. Es una excepción explícita, igual que `[SET]` y `[DRY]`.
+    - Nombra el SKU y la variante establecida para que se pueda corregir el catálogo.
+    - No menciona la causa.
+    - Es acotada: solo aparece para SKUs con duplicados.
 
 ## Alternativas descartadas
 

@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "feature": "verificar-cache-sku",
+  "fecha": "2026-11-02T19:14:42+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "41bbd0d9cae67ea6b1fabd5796f115da1fe0f2de",
+    "diff_sha256": "d52c949e324a806b6392da7b302979e492a750321295df75684c1ead64850e57"
+  },
+  "oraculo_sha256": "f75f2302d440954ca648192d30bc32a95af508374d76d09cd3cc8fb3153dcdee",
+  "contrato_sha256": "cc5d285aaa734909d7b69f6900d72bcd0aa81c88e8d64ca6d588f83224e7233a",
+  "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+  "veredicto": "APRUEBA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-verificada.test.js` salió con exit 0: 12 de 12 tests pasan. Cubren estos casos: caché válida con una sola búsqueda `sku:\"...\"`, `first` en 10 y sin `GetLevel`; APPLYFIT con la 17e y `duplicados` en 4; caché renombrada que devuelve `inventoryItemId` null y borra la entrada; caché envenenada con un prefijo largo, que se invalida; `cambioDeDestino` cuando el SKU queda único en W; `SkuAmbiguoError` con `cacheInvalidada`; el caso sin caché, que se comporta como hoy; falla de la búsqueda con la caché intacta; tope con cero, una o dos coincidencias exactas visibles, que rechaza sin `SkuAmbiguoError` y sin invalidar; tope sin conflicto, que devuelve la coincidencia; y `pageInfo` con `hasNextPage` en la consulta."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-duplicados.test.js` salió con exit 0: 5 de 5 tests pasan. En el caso APPLYFIT escribe 3 una sola vez en la 17e, con `ambiguo` en 0, `duplicados` en 1 en el retorno y en el `[RESUMEN]`, un solo `[AVISO]` que dice 5 variantes y nombra el `variantId` de la 17e, y `evaluarCorrida` da ok. También cubre DRY_RUN, el prefijo largo sin aviso, la isla con el prefijo `galerias-pacifico/` y el caso `causa_desconocida`, donde el aviso sale y ninguna línea con \"desconocid\" nombra al SKU."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-renombre.test.js` salió con exit 0: 6 de 6 tests pasan. (a) En V se escribe solo la siembra 7, X queda `no_encontrado`, `cache_invalidada` en 1 y la caché queda en `{Y: V}`. (b) Escribe el absoluto 8 en W, con `resembradoEn`, `resembradoPor` y el consumo marcados como `sembrado`, y `causa_venta_shopify` en 0. (d) Queda ambiguo, sin escrituras. El par invertido da `cache_invalidada` en 2. En el tope hay 1 error, `[ERROR] dot/IEY-X:`, 25 SKUs y `evaluarCorrida` ok. Con los comprobantes caídos, `causa_desconocida` queda en 0."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-sin-cache.test.js` salió con exit 0: 1 de 1 test pasa. Sin caché: el SKU nuevo se siembra y se cachea; el SKU con baseline aplica el delta (4, no 8); el doble queda ambiguo; el inexistente y el que solo coincide con un prefijo largo quedan `no_encontrado`; el `[RESUMEN]` muestra `duplicados=0` y `cache_invalidada=0`."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-caminos-de-escritura.test.js` salió con exit 0: 7 de 7 tests pasan. `syncUnSku`: con caché renombrada no escribe y lo informa como \"no existe en Shopify\" y no como \"no esta activado\"; con X único en W siembra y guarda `resembradoEn`; con duplicados aplica el delta en la variante establecida. `--full`: da `no_encontrado` y escribe en la establecida. Compuerta: escribe el absoluto con motivo `absoluto`; sin la variante no cuenta como aplicada; con duplicados escribe en la establecida, cuenta como aplicada y emite el `[AVISO]` con el `variantId`."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-costo.test.js` salió con exit 0: 2 de 2 tests pasan. Hace exactamente tres búsquedas, en el orden esperado, sin `GetLevel`; el SKU sin cambios no llega a `resolverSku` y `saltado` queda en 1. Si la búsqueda falla con la caché presente, da `error`, no escribe, no consulta `GetLevel` y deja la caché intacta."
+    },
+    {
+      "id": "CA-7",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-resumen.test.js` salió con exit 0: 3 de 3 tests pasan. El `[RESUMEN]` trae todas las claves previas más `duplicados=1` y `cache_invalidada=1`, sin nombrar SKUs, y el retorno trae los mismos números. Con nada que contar, las dos claves aparecen en 0. Un error de escritura después de invalidar se intenta en la variante nueva y cuenta `error` 1 y `cache_invalidada` 1; el baseline no avanza y se conserva el destino inicializado desde la caché."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`node --test test/cache-sku-destino-por-par.test.js` salió con exit 0: 14 de 14 tests pasan. Cubren de D1 a D12: D5b, D8a, D8b, D9 con el checkpoint, D10 donde manda la libreta y aplica el delta 3 con `cache_invalidada` en 1, y D11 y D12 con el tope en `ejecutarPar` y en `syncUnSku`, sin escribir y conservando destino y baseline."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "verificar-cache-sku/20261102T191238Z",
+      "motivo": "`npm test` salió con exit 0: 391 de 391 tests pasan, 0 skipped y 0 todo. El diff no toca tests previos y en `test/` no hay `.skip`, `.todo` ni `.only`."
+    }
+  ],
+  "hallazgos": []
+}

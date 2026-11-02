@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { getStockDeposito, buscarComprobantes, fetchComprobantesDetalle, crearSesionContabilium } from "./contabilium.js";
-import { resolverSku, setearStock, SkuAmbiguoError } from "./shopify.js";
+import { resolverSku, setearStock, SkuAmbiguoError, leerCacheSku } from "./shopify.js";
 import { esNoSincronizable } from "./no-sincronizables.js";
 import { detectarAnomalias, formatearAnomalias } from "./anomalias.js";
 import {
@@ -95,6 +95,8 @@ function parsearContabilidad(crudo) {
     consumos: vigente && esObjetoPlano(crudo.consumos) ? crudo.consumos : {},
     resembradoEn: vigente && esObjetoPlano(crudo.resembradoEn) ? crudo.resembradoEn : {},
     resembradoPor: vigente && esObjetoPlano(crudo.resembradoPor) ? crudo.resembradoPor : {},
+    // R-9: sku -> inventoryItemId contra el que avanzo el baseline de este par.
+    destinos: vigente && esObjetoPlano(crudo.destinos) ? crudo.destinos : {},
   };
 }
 
@@ -103,7 +105,7 @@ function parsearContabilidad(crudo) {
 export function cargarLibretaCompleta(ruta = SNAPSHOT_PATH) {
   try {
     if (!existsSync(ruta)) {
-      return { skus: {}, contabilium: null, corte: null, consumos: {}, resembradoEn: {}, resembradoPor: {} };
+      return { skus: {}, contabilium: null, corte: null, consumos: {}, resembradoEn: {}, resembradoPor: {}, destinos: {} };
     }
     const crudo = JSON.parse(readFileSync(ruta, "utf-8"));
     return {
@@ -134,7 +136,7 @@ export function cargarSnapshot(ruta = SNAPSHOT_PATH) {
 }
 
 // guardarSnapshot — UNA escritura con baseline y contabilidad juntos (R-8).
-//   contabilidad = { corte, consumos, resembradoEn, resembradoPor } | null
+//   contabilidad = { corte, consumos, resembradoEn, resembradoPor, destinos? } | null
 //   - dada: se escriben esos campos en el MISMO writeFileSync que skus/contabilium.
 //   - null (llamadas de 3 argumentos: syncUnSku sin siembra, syncTodos): se
 //     CONSERVAN los que ya hay en disco. Nunca se borran.
@@ -145,7 +147,7 @@ export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH, contabilium = null, 
   if (contabilium) payload.contabilium = contabilium instanceof Map ? Object.fromEntries(contabilium) : { ...contabilium };
 
   let c = contabilidad;
-  if (!c) {
+  if (!c || (c.corte === undefined && c.consumos === undefined && c.resembradoEn === undefined && c.resembradoPor === undefined)) {
     const previa = cargarLibretaCompleta(ruta);
     c = {
       corte: previa.corte ?? null,
@@ -158,6 +160,12 @@ export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH, contabilium = null, 
   if (esObjetoPlano(c.consumos) && Object.keys(c.consumos).length > 0) payload.consumos = c.consumos;
   if (esObjetoPlano(c.resembradoEn) && Object.keys(c.resembradoEn).length > 0) payload.resembradoEn = c.resembradoEn;
   if (esObjetoPlano(c.resembradoPor) && Object.keys(c.resembradoPor).length > 0) payload.resembradoPor = c.resembradoPor;
+  // R-9: destinos viajan en la MISMA escritura que el baseline. Sin destinos en
+  // la contabilidad (3 argumentos, o una contabilidad que no los trae) se
+  // conservan los del disco: nunca se borran. null cuenta como ausente.
+  let destinos = contabilidad && contabilidad.destinos != null ? contabilidad.destinos : undefined;
+  if (destinos === undefined) destinos = cargarLibretaCompleta(ruta).destinos;
+  if (esObjetoPlano(destinos) && Object.keys(destinos).length > 0) payload.destinos = destinos;
   writeFileSync(ruta, JSON.stringify(payload, null, 2), "utf-8");
 }
 
@@ -307,12 +315,22 @@ export function armarPlanDeEscritura(par, stockPorSku, baselinePorSku, shopifyPo
 // para contar al final.
 // `d` son las dependencias de Shopify y del modo (por defecto, las reales):
 // syncUnSku las recibe inyectadas (DISENO-INTERFAZ 4.2).
+// R-9 + E2: el destino conocido por la libreta difiere del resuelto, no aparece
+// en la respuesta y la busqueda llego al tope: no se sabe si fue renombrado o
+// quedo afuera de las visibles.
+function destinoFueraDelTope(conoce, destinoLibreta, info) {
+  if (!conoce || destinoLibreta === info.inventoryItemId || info.topeAlcanzado !== true) return false;
+  const vistos = Array.isArray(info.itemsVistos) ? info.itemsVistos : [info.inventoryItemId];
+  return !vistos.includes(destinoLibreta);
+}
+
 async function procesarSku(
   sku,
   stockObjetivo,
   baseline,
   locationId = process.env.SHOPIFY_DOT_LOCATION_ID,
-  d = { resolverSku, setearStock, esDryRun }
+  d = { resolverSku, setearStock, esDryRun },
+  extra = {}
 ) {
   const dryRun = d.esDryRun();
 
@@ -331,13 +349,37 @@ async function procesarSku(
     return "error";
   }
 
-  // Requisito 16: SKU no existe en Shopify -> loguear y continuar
-  if (!info) {
+  // Requisito 16: SKU no existe en Shopify -> loguear y continuar. Un objeto
+  // con inventoryItemId null (cache invalidada sin coincidencias) es lo mismo,
+  // nunca no_activado (R-3).
+  if (!info || !info.inventoryItemId) {
     console.warn(`  [SKIP] ${sku}: no existe en Shopify`);
     return "no_encontrado";
   }
 
   const { inventoryItemId, available } = info;
+  if (info.duplicados > 0) {
+    console.warn(
+      `  [AVISO] ${sku}: ${info.duplicados + 1} variantes de Shopify tienen el sku exacto -> ` +
+        `se escribe en la variante establecida ${info.variantId}`
+    );
+  }
+
+  // R-4/R-9: si la libreta conoce el destino, manda la libreta; si no, la marca
+  // del resolver. Con el destino fuera del tope no se sabe: error, sin escribir.
+  const destinoLibreta = extra.destinoLibreta ?? null;
+  const conoce = baseline !== null && baseline !== undefined && destinoLibreta !== null;
+  if (destinoFueraDelTope(conoce, destinoLibreta, info)) {
+    console.error(
+      `  [ERROR] ${sku}: el destino de la libreta no esta entre las variantes visibles y la busqueda llego al tope -> no se escribe`
+    );
+    return "error";
+  }
+  const cambioDeDestino = conoce
+    ? destinoLibreta !== inventoryItemId
+    : baseline !== null && baseline !== undefined && info.cambioDeDestino === true;
+  extra.inventoryItemId = inventoryItemId;
+  extra.sembro = baseline === null || baseline === undefined || cambioDeDestino;
 
   // Item no activado en la location DOT: no podemos setear sin activarlo antes.
   if (available === null) {
@@ -351,7 +393,7 @@ async function procesarSku(
   // R-1/ADR 0001: nunca escribir el absoluto de Contabilium. Se calcula el
   // delta contra la linea base (null si es la primera vez que se ve el SKU).
   const { nuevoValor } = calcularEscritura({
-    baseline: baseline ?? null,
+    baseline: cambioDeDestino ? null : baseline ?? null,
     contabiliumActual: stockObjetivo,
     shopifyActual: available,
   });
@@ -429,24 +471,29 @@ export async function syncUnSku(sku, manualQty = null, deps = {}) {
   const ruta = d.rutaSnapshotPara("dot");
   const libreta = d.cargarLibretaCompleta(ruta);
   const baseline = libreta.contabilium?.[skuNorm] ?? null;
-  const resultado = await procesarSku(skuNorm, objetivo, baseline, process.env.SHOPIFY_DOT_LOCATION_ID, d);
+  const destinosPrevios = esObjetoPlano(libreta.destinos) ? libreta.destinos : {};
+  const extra = { destinoLibreta: destinosPrevios[skuNorm] ?? null };
+  const resultado = await procesarSku(skuNorm, objetivo, baseline, process.env.SHOPIFY_DOT_LOCATION_ID, d, extra);
 
   // CA-1: solo se anota lo REALMENTE sincronizado en Shopify (R-7).
   if (resultado === "actualizado" || resultado === "sin_cambios") {
     const snapshotNuevo = { ...libreta.skus, [skuNorm]: objetivo };
     const contabiliumNuevo = new Map(Object.entries(libreta.contabilium ?? {}));
     contabiliumNuevo.set(skuNorm, objetivo);
-    if (baseline === null) {
+    // R-9: el destino avanza con el baseline, en la misma escritura.
+    const destinos = { ...destinosPrevios, [skuNorm]: extra.inventoryItemId };
+    if (baseline === null || extra.sembro) {
       // Siembra: resembradoEn en la misma escritura, armado desde lo CARGADO.
       d.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo, {
         corte: libreta.corte ?? null,
         consumos: { ...(libreta.consumos ?? {}) },
         resembradoEn: { ...(libreta.resembradoEn ?? {}), [skuNorm]: tInicioLectura.toISOString() },
         resembradoPor: { ...(libreta.resembradoPor ?? {}), [skuNorm]: "sembrado" },
+        destinos,
       });
     } else {
-      // Delta: 3 argumentos, conserva corte/consumos/resembradoEn del disco.
-      d.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo);
+      // Delta: solo destinos; corte/consumos/resembradoEn se conservan del disco.
+      d.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo, { destinos });
     }
   }
   console.log(`=== Fin ===\n`);
@@ -582,6 +629,7 @@ export async function syncTodos({ full = false } = {}) {
 export const DEPS_REALES = {
   getStockDeposito,
   resolverSku,
+  leerCacheSku: () => leerCacheSku(),
   setearStock,
   cargarLibretaCompleta,
   guardarSnapshot,
@@ -897,6 +945,23 @@ async function ejecutarParEnCorrida(
   const registro = registroDe(ctx);
   const sesion = sesionDe(ctx);
 
+  // R-9: la cache se lee UNA vez por corrida, antes de la primera resolucion.
+  // Sin deps.leerCacheSku no se inicializa nada (nunca la cache real de respaldo).
+  if (ctx.cacheInicial === undefined) {
+    const leida = typeof deps.leerCacheSku === "function" ? deps.leerCacheSku() : null;
+    ctx.cacheInicial = esObjetoPlano(leida) ? leida : null;
+  }
+  // Destino por par, inicializado POR SKU: todo SKU con baseline y sin destino
+  // toma el de la cache del inicio de la corrida.
+  const destinos = esObjetoPlano(libreta.destinos) ? { ...libreta.destinos } : {};
+  if (ctx.cacheInicial) {
+    for (const sku of Object.keys(libreta.contabilium ?? {})) {
+      const base = libreta.contabilium[sku];
+      if (base === null || base === undefined || destinos[sku] != null) continue;
+      if (ctx.cacheInicial[sku]) destinos[sku] = ctx.cacheInicial[sku];
+    }
+  }
+
   // R-9: tInicioLectura ANTES de leer el stock.
   const tInicioLectura = typeof deps.ahora === "function" ? deps.ahora() : new Date();
   const tIso = tInicioLectura.toISOString();
@@ -983,6 +1048,8 @@ async function ejecutarParEnCorrida(
     no_sincronizable: 0,
     saltado: 0,
   };
+  let duplicados = 0;
+  let cacheInvalidada = 0;
   let causaVentaShopify = 0;
   let causaDesconocida = 0;
   const clasificadorIncompleto = clasificador === "fallo" || clasificador === "parcial";
@@ -992,6 +1059,7 @@ async function ejecutarParEnCorrida(
     consumos: contab.consumos,
     resembradoEn: contab.resembradoEn,
     resembradoPor: contab.resembradoPor,
+    destinos,
   });
 
   let procesados = 0;
@@ -1026,9 +1094,11 @@ async function ejecutarParEnCorrida(
     let info;
     let resultado;
     let motivoAbsoluto = null;
+    let invalidada = false;
     try {
       info = await deps.resolverSku(sku, par.locationId);
     } catch (err) {
+      if (err?.cacheInvalidada === true) invalidada = true;
       if (err instanceof SkuAmbiguoError) {
         console.warn(`  [SKIP] ${par.nombre}/${sku}: ${err.message} -> no se escribe`);
         for (const linea of err.detalle()) console.warn(linea);
@@ -1041,47 +1111,83 @@ async function ejecutarParEnCorrida(
     }
 
     if (resultado === undefined) {
-      if (!info) {
+      if (info?.cacheInvalidada === true) invalidada = true;
+      if (!info || !info.inventoryItemId) {
+        // R-3: un objeto con inventoryItemId null es no_encontrado, nunca no_activado.
         console.warn(`  [SKIP] ${par.nombre}/${sku}: no existe en Shopify`);
         resultado = "no_encontrado";
-      } else if (info.available === null) {
-        console.warn(`  [SKIP] ${par.nombre}/${sku}: el item no esta activado en esa location`);
-        resultado = "no_activado";
       } else {
         const { inventoryItemId, available } = info;
-
-        let nuevoValor;
-        if (alcanzaAbsoluta || sembrado) {
-          // R-7: compuerta manual o primera vez del SKU: el absoluto.
-          nuevoValor = Math.round(cantidad);
-          motivoAbsoluto = alcanzaAbsoluta ? "absoluto" : "sembrado";
-        } else {
-          // R-5: regla contable. Nunca el absoluto (invariante 1).
-          const delta = cantidad - baseline;
-          nuevoValor = Math.round(available + delta + credito.credito);
-          if (clasificadorIncompleto && delta + credito.credito !== 0) causaDesconocida++;
+        if (info.duplicados > 0) {
+          // R-2: alerta de CATALOGO (no de causa), excepcion documentada al CA-4
+          // del clasificador. Nombra la variante establecida para cotejarla.
+          duplicados++;
+          console.warn(
+            `  [AVISO] ${par.nombre}/${sku}: ${info.duplicados + 1} variantes de Shopify tienen el sku exacto -> ` +
+              `se escribe en la variante establecida ${info.variantId}`
+          );
         }
 
-        if (available === nuevoValor) {
-          resultado = "sin_cambios";
-        } else if (esDry()) {
-          planDry.push({ sku, par: par.nombre, locationId: par.locationId, actual: available, nuevoValor });
-          console.log(
-            `  [DRY] ${par.nombre}/${sku}: actualizaria ${available} -> ${nuevoValor} (no se escribe, DRY_RUN=true)`
+        // R-4/R-9: si la libreta conoce el destino, manda la libreta.
+        const destinoLibreta = destinos[sku] ?? null;
+        const conoce = !sembrado && destinoLibreta !== null;
+        const cambioDeDestino = conoce
+          ? destinoLibreta !== inventoryItemId
+          : !sembrado && info.cambioDeDestino === true;
+        const enTope = destinoFueraDelTope(conoce, destinoLibreta, info);
+        if (cambioDeDestino && !enTope) invalidada = true;
+
+        if (enTope) {
+          // Tope (R-1/R-9): no se invalida ni cuenta en cache_invalidada.
+          console.error(
+            `  [ERROR] ${par.nombre}/${sku}: el destino de la libreta no esta entre las variantes visibles y la busqueda llego al tope -> no se escribe`
           );
-          resultado = "dry";
+          resultado = "error";
+        } else if (available === null) {
+          console.warn(`  [SKIP] ${par.nombre}/${sku}: el item no esta activado en esa location`);
+          resultado = "no_activado";
         } else {
-          try {
-            await deps.setearStock(inventoryItemId, nuevoValor, available, par.locationId);
-            console.log(`  [SET] ${par.nombre}/${sku}: ${available} -> ${nuevoValor}`);
-            resultado = "actualizado";
-          } catch (err) {
-            console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al escribir en Shopify -> ${err.message}`);
-            resultado = "error";
+          let nuevoValor;
+          if (alcanzaAbsoluta || sembrado || cambioDeDestino) {
+            // R-7: compuerta manual, primera vez del SKU o baseline de OTRA
+            // variante (R-4): el absoluto, sin credito.
+            nuevoValor = Math.round(cantidad);
+            motivoAbsoluto = alcanzaAbsoluta ? "absoluto" : "sembrado";
+          } else {
+            // R-5: regla contable. Nunca el absoluto (invariante 1).
+            const delta = cantidad - baseline;
+            nuevoValor = Math.round(available + delta + credito.credito);
+            if (clasificadorIncompleto && delta + credito.credito !== 0) causaDesconocida++;
+          }
+
+          if (available === nuevoValor) {
+            resultado = "sin_cambios";
+          } else if (esDry()) {
+            planDry.push({ sku, par: par.nombre, locationId: par.locationId, actual: available, nuevoValor });
+            console.log(
+              `  [DRY] ${par.nombre}/${sku}: actualizaria ${available} -> ${nuevoValor} (no se escribe, DRY_RUN=true)`
+            );
+            resultado = "dry";
+          } else {
+            try {
+              await deps.setearStock(inventoryItemId, nuevoValor, available, par.locationId);
+              console.log(`  [SET] ${par.nombre}/${sku}: ${available} -> ${nuevoValor}`);
+              resultado = "actualizado";
+            } catch (err) {
+              console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al escribir en Shopify -> ${err.message}`);
+              resultado = "error";
+            }
           }
         }
       }
     }
+    // R-8: tambien cuenta si lo que dejo de valer es el destino de la libreta
+    // (sin entrada de cache), solo si la cache del inicio de la corrida todavia
+    // tenia la entrada: asi cuenta una vez. El destino se conserva (R-9). El tope no llega aca.
+    if (!sembrado && destinos[sku] != null && ctx.cacheInicial?.[sku] != null && (resultado === "no_encontrado" || resultado === "ambiguo")) {
+      invalidada = true;
+    }
+    if (invalidada) cacheInvalidada++;
 
     contadores[resultado] = (contadores[resultado] ?? 0) + 1;
     if (alcanzaAbsoluta) {
@@ -1103,6 +1209,7 @@ async function ejecutarParEnCorrida(
     // DRY_RUN se calculan en memoria pero nunca se persisten.
     if (resultado === "actualizado" || resultado === "sin_cambios" || resultado === "dry") {
       contabiliumNuevo.set(sku, cantidad);
+      destinos[sku] = info.inventoryItemId; // R-9: el destino viaja con el baseline
       if (motivoAbsoluto) {
         contab.resembradoEn[sku] = tIso;
         contab.resembradoPor[sku] = motivoAbsoluto;
@@ -1158,6 +1265,8 @@ async function ejecutarParEnCorrida(
     comprobantes_ilegibles: contarEstado(registro, "ilegible"),
     compuerta_pedidos: compuertaSkus.pedidos.length,
     compuerta_aplicados: compuertaSkus.aplicados.length,
+    duplicados,
+    cache_invalidada: cacheInvalidada,
   };
 
   // R-12: un resumen por par, sin SKUs (repo y logs publicos).

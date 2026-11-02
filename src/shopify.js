@@ -228,6 +228,9 @@ export const QUERY_POR_SKU = `
           }
         }
       }
+      pageInfo {
+        hasNextPage
+      }
     }
   }
 `;
@@ -324,29 +327,135 @@ export async function leerStockActual(inventoryItemId, locationId) {
 }
 
 // -----------------------------------------------------------------------------
-// resolverInventoryItemId — usa cache, consulta Shopify solo si hace falta
+// leerCacheSku — copia NUEVA de la cache leida del disco, sin memo (R-9)
 // -----------------------------------------------------------------------------
-// Devuelve { inventoryItemId, available } o null si el SKU no existe en Shopify.
-export async function resolverSku(sku, locationId) {
+// ejecutarPar la lee UNA vez al empezar la corrida para inicializar el destino
+// por par de los SKUs con baseline. Archivo ausente o corrupto -> {}.
+export function leerCacheSku(ruta = CACHE_PATH) {
+  try {
+    if (!existsSync(ruta)) return {};
+    const crudo = JSON.parse(readFileSync(ruta, "utf-8"));
+    return crudo && typeof crudo === "object" && !Array.isArray(crudo) ? { ...crudo } : {};
+  } catch {
+    return {};
+  }
+}
+
+function escribirCacheEn(ruta, mapa) {
+  mkdirSync(dirname(ruta), { recursive: true });
+  writeFileSync(ruta, JSON.stringify(mapa, null, 2), "utf-8");
+}
+
+function availableDe(node) {
+  return node?.inventoryItem?.inventoryLevel?.quantities?.find((q) => q.name === "available")?.quantity ?? null;
+}
+
+// -----------------------------------------------------------------------------
+// resolverSku — verifica SIEMPRE contra Shopify, tambien con acierto en cache
+// -----------------------------------------------------------------------------
+// Invariante 3: el id cacheado solo se usa si la busqueda exacta de ESTA
+// llamada lo devuelve con el sku pedido. Una sola consulta por llamada
+// (QUERY_POR_SKU), que en el acierto de cache reemplaza a GetLevel (R-7).
+// Forma del retorno: aceptacion/verificar-cache-sku/DISENO-INTERFAZ.md, seccion 3.
+//   opciones.consultar  async (query, variables) => data (por defecto, shopifyGraphQL)
+//   opciones.rutaCache  ruta de la cache; explicita = sin memo de proceso
+export async function resolverSku(sku, locationId, opciones = {}) {
   if (!locationId) {
     throw new Error(`resolverSku(${sku}): locationId es obligatorio, no hay default`);
   }
-  const c = cargarCache();
-  const cacheado = c[sku];
+  const consultar = typeof opciones?.consultar === "function" ? opciones.consultar : shopifyGraphQL;
+  const rutaCache = typeof opciones?.rutaCache === "string" ? opciones.rutaCache : null;
+  const c = rutaCache ? leerCacheSku(rutaCache) : cargarCache();
+  const persistir = () => (rutaCache ? escribirCacheEn(rutaCache, c) : guardarCache());
+  const cacheado = c[sku] ?? null;
+
+  // Si la busqueda falla, se propaga: no se usa el id cacheado sin verificar.
+  const data = await consultar(QUERY_POR_SKU, {
+    query: `sku:"${escaparValorBusqueda(sku)}"`,
+    locationId,
+    first: CANDIDATOS_POR_SKU,
+  });
+
+  const nodos = (data?.productVariants?.edges ?? []).map((e) => e?.node).filter(Boolean);
+  const topeAlcanzado = data?.productVariants?.pageInfo?.hasNextPage === true;
+  const itemsVistos = nodos.map((n) => n.inventoryItem?.id).filter(Boolean);
+  // Coincidencia EXACTA: aparecer en la busqueda tokenizada no alcanza.
+  const exactos = nodos.filter((n) => n.sku === sku && n.inventoryItem?.id);
+  const armar = (n, extra) => ({
+    inventoryItemId: n.inventoryItem.id,
+    variantId: n.id ?? null,
+    available: availableDe(n),
+    topeAlcanzado,
+    itemsVistos,
+    ...extra,
+  });
 
   if (cacheado) {
-    // Ya conocemos el id: solo leemos el stock actual (mas barato).
-    const available = await leerStockActual(cacheado, locationId);
-    return { inventoryItemId: cacheado, available, desdeCache: true };
+    const establecida = exactos.find((n) => n.inventoryItem.id === cacheado);
+    if (establecida) {
+      // Variante establecida: se sigue escribiendo ahi aunque haya duplicados (R-2).
+      return armar(establecida, {
+        desdeCache: true,
+        duplicados: exactos.length - 1,
+        cacheInvalidada: false,
+        cambioDeDestino: false,
+        inventoryItemIdAnterior: cacheado,
+      });
+    }
+    if (topeAlcanzado) {
+      // E2: no se sabe si la establecida fue renombrada o quedo afuera del tope.
+      const err = new Error(
+        `busqueda en el tope de ${CANDIDATOS_POR_SKU} candidatos y la variante cacheada no esta entre las visibles -> no se escribe`
+      );
+      err.topeAlcanzado = true;
+      throw err;
+    }
+    // R-3: la entrada dejo de valer. Se resuelve de cero con la MISMA respuesta.
+    delete c[sku];
+    if (exactos.length === 1) {
+      c[sku] = exactos[0].inventoryItem.id;
+      persistir();
+      return armar(exactos[0], {
+        desdeCache: false,
+        duplicados: 0,
+        cacheInvalidada: true,
+        cambioDeDestino: true,
+        inventoryItemIdAnterior: cacheado,
+      });
+    }
+    persistir();
+    if (exactos.length > 1) {
+      const err = new SkuAmbiguoError(sku, exactos);
+      err.cacheInvalidada = true;
+      err.inventoryItemIdAnterior = cacheado;
+      throw err;
+    }
+    return {
+      inventoryItemId: null,
+      variantId: null,
+      available: null,
+      desdeCache: false,
+      duplicados: 0,
+      cacheInvalidada: true,
+      cambioDeDestino: false,
+      inventoryItemIdAnterior: cacheado,
+      topeAlcanzado,
+      itemsVistos,
+    };
   }
 
-  // Primera vez: query completa por SKU y guardamos el id en cache.
-  const resultado = await buscarVariantePorSku(sku, locationId);
-  if (!resultado) return null;
-
-  c[sku] = resultado.inventoryItemId;
-  guardarCache();
-  return { ...resultado, desdeCache: false };
+  // Sin entrada en cache: el comportamiento de siempre (R-5).
+  if (exactos.length === 0) return null;
+  if (exactos.length > 1) throw new SkuAmbiguoError(sku, exactos);
+  c[sku] = exactos[0].inventoryItem.id;
+  persistir();
+  return armar(exactos[0], {
+    desdeCache: false,
+    duplicados: 0,
+    cacheInvalidada: false,
+    cambioDeDestino: false,
+    inventoryItemIdAnterior: null,
+  });
 }
 
 // -----------------------------------------------------------------------------
