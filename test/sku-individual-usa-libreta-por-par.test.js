@@ -439,3 +439,159 @@ test("CA-1: despues de escribir, syncUnSku deja la libreta POR-PAR actualizada, 
   );
   assert.equal(resultadoCorridaSiguiente.actualizado ?? 0, 0);
 });
+
+// -----------------------------------------------------------------------------
+// R-8 / R-14 — REEMPLAZO AUTORIZADO (decision D-7 de la persona, 02/11/2026:
+// "Sí, retiralos (Recommended)"). Este caso probaba que `syncUnSku` no borrara
+// `ultimaCorridaExitosa`, el campo de la ventana temporal que el diseño B
+// retira. La propiedad sigue valiendo sobre lo que lo reemplaza: `syncUnSku`
+// no decide el corte ni los consumos del registro (eso lo hace ejecutarPar),
+// pero tampoco puede DESTRUIRLOS. `syncUnSku` llama a `guardarSnapshot` con 3
+// argumentos; si esa escritura reemplazara el payload entero, cada corrida de
+// `--sku` borraria los consumos de la libreta por-par, y la corrida siguiente
+// de ejecutarPar volveria a acreditar creditos ya usados (Shopify arriba:
+// sobreventa), o reiniciaria el corte.
+// Interfaz: aceptacion/clasificador-causa-comprobante/DISENO-INTERFAZ.md, seccion 4.
+// -----------------------------------------------------------------------------
+
+test("R-8: syncUnSku no borra el corte ni los consumos del registro ya presentes en la libreta por-par del DOT", async (t) => {
+  const SKU = "TEST-R8-SYNCUNSKU-NO-BORRA-UNICO";
+  const LOCATION_DOT = "gid://shopify/Location/83342655574";
+  const CORTE_VIEJO = "2026-10-05T08:00:00.000Z";
+  const CONSUMOS_VIEJOS = {
+    [`177960828:${SKU}`]: { cantidad: 1, motivo: "delta", referencia: "2026-10-06T12:00:00.000Z", en: "2026-10-06T12:30:00.000Z" },
+    "177960900:IEY-OTRO": { cantidad: 2, motivo: "pre-corte", referencia: "2026-10-05T07:00:00.000Z", en: "2026-10-05T08:00:00.000Z" },
+  };
+
+  const rutaLegada = SNAPSHOT_PATH;
+  const rutaPorPar = rutaSnapshotPara("dot");
+
+  const backupLegado = backupArchivo(rutaLegada);
+  const backupPorPar = backupArchivo(rutaPorPar);
+  const backupCacheSku = backupArchivo(RUTA_CACHE_SKU);
+
+  {
+    const cacheSku = leerCacheSku();
+    delete cacheSku[SKU];
+    mkdirSync(dirname(RUTA_CACHE_SKU), { recursive: true });
+    writeFileSync(RUTA_CACHE_SKU, JSON.stringify(cacheSku, null, 2), "utf-8");
+  }
+
+  const envPrevio = {
+    DRY_RUN: process.env.DRY_RUN,
+    SHOPIFY_STORE_DOMAIN: process.env.SHOPIFY_STORE_DOMAIN,
+    SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION,
+    SHOPIFY_CLIENT_ID: process.env.SHOPIFY_CLIENT_ID,
+    SHOPIFY_CLIENT_SECRET: process.env.SHOPIFY_CLIENT_SECRET,
+    SHOPIFY_DOT_LOCATION_ID: process.env.SHOPIFY_DOT_LOCATION_ID,
+  };
+  const fetchOriginal = globalThis.fetch;
+
+  t.after(() => {
+    restaurarArchivo(rutaLegada, backupLegado);
+    restaurarArchivo(rutaPorPar, backupPorPar);
+    restaurarArchivo(RUTA_CACHE_SKU, backupCacheSku);
+    globalThis.fetch = fetchOriginal;
+    for (const [k, v] of Object.entries(envPrevio)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  process.env.DRY_RUN = "false";
+  process.env.SHOPIFY_STORE_DOMAIN = "tienda-fake.myshopify.com";
+  process.env.SHOPIFY_API_VERSION = "2026-04";
+  process.env.SHOPIFY_CLIENT_ID = "id-fake";
+  process.env.SHOPIFY_CLIENT_SECRET = "secret-fake";
+  process.env.SHOPIFY_DOT_LOCATION_ID = LOCATION_DOT;
+
+  // Libreta por-par previa: una corrida anterior de ejecutarPar ya fijo el
+  // corte y dejo consumos. Se escribe el JSON crudo (formato de
+  // DISENO-INTERFAZ.md seccion 4), sin pasar por el codigo bajo prueba.
+  // Baseline de Contabilium para este SKU: 12.
+  mkdirSync(dirname(rutaPorPar), { recursive: true });
+  writeFileSync(
+    rutaPorPar,
+    JSON.stringify({ __v: 2, skus: { [SKU]: 6 }, contabilium: { [SKU]: 12 }, corte: CORTE_VIEJO, consumos: CONSUMOS_VIEJOS }, null, 2),
+    "utf-8"
+  );
+
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes("/oauth/access_token")) {
+      return { ok: true, json: async () => ({ access_token: "tok-fake", expires_in: 86400 }) };
+    }
+    const body = JSON.parse(opts.body);
+
+    if (body.query.includes("GetVariantBySku")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            productVariants: {
+              edges: [
+                {
+                  node: {
+                    id: "gid://shopify/ProductVariant/R8-1",
+                    sku: SKU,
+                    product: { id: "gid://shopify/Product/R8-1", title: "Fixture R-8" },
+                    inventoryItem: {
+                      id: "gid://shopify/InventoryItem/R8-1",
+                      inventoryLevel: {
+                        quantities: [{ name: "available", quantity: 3 }],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+      };
+    }
+
+    if (body.query.includes("GetLevel")) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            inventoryItem: {
+              inventoryLevel: {
+                quantities: [{ name: "available", quantity: 3 }],
+              },
+            },
+          },
+        }),
+      };
+    }
+
+    if (body.query.includes("InventorySet")) {
+      return { ok: true, json: async () => ({ data: { inventorySetQuantities: { userErrors: [] } } }) };
+    }
+
+    throw new Error("fetch inesperado en el test R-8 (syncUnSku no borra consumos): " + body.query.slice(0, 80));
+  };
+
+  // Contabilium "ahora" = 14 (baseline 12 -> delta +2, DRY_RUN=false escribe:
+  // termina en "actualizado", uno de los dos finales que pide la tarea).
+  await syncUnSku(SKU, 14);
+
+  // Se lee el archivo REAL en disco, crudo.
+  const crudo = JSON.parse(readFileSync(rutaPorPar, "utf-8"));
+  assert.equal(crudo.contabilium[SKU], 14, "control: syncUnSku si escribio y avanzo el baseline (12 -> 14)");
+  assert.equal(
+    crudo.corte,
+    CORTE_VIEJO,
+    "syncUnSku no decide el corte, pero tampoco puede borrarlo ni moverlo: si desaparece, la " +
+      "proxima corrida de ejecutarPar se cree la primera y reinicia el corte"
+  );
+  assert.deepEqual(
+    crudo.consumos,
+    CONSUMOS_VIEJOS,
+    "syncUnSku no puede borrar consumos ya persistidos: sin ellos, ejecutarPar volveria a " +
+      "acreditar creditos ya usados (Shopify arriba: sobreventa)"
+  );
+  // Y por la interfaz publica de lectura, lo mismo.
+  const libretaTrasEscritura = cargarLibretaCompleta(rutaPorPar);
+  assert.equal(libretaTrasEscritura.corte, CORTE_VIEJO);
+  assert.deepEqual(libretaTrasEscritura.consumos, CONSUMOS_VIEJOS);
+});

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Rediseño del clasificador de causa por comprobante — propuesta</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1.2rem; color: #1d1d1f; line-height: 1.5; }
+  h1 { font-size: 1.6rem; margin-bottom: .2rem; }
+  h2 { margin-top: 2.4rem; border-bottom: 2px solid #e5e5ea; padding-bottom: .3rem; }
+  h3 { margin-top: 1.6rem; }
+  .meta { color: #6e6e73; font-size: .9rem; }
+  .rec { background: #e8f5e9; border-left: 4px solid #2e7d32; padding: .8rem 1rem; margin: 1rem 0; }
+  .warn { background: #fff8e1; border-left: 4px solid #f9a825; padding: .8rem 1rem; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92rem; }
+  th, td { border: 1px solid #d2d2d7; padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #f5f5f7; }
+  td.si { background: #e8f5e9; }
+  td.no { background: #fdecea; }
+  td.parcial { background: #fff8e1; }
+  code { background: #f5f5f7; padding: 0 .25rem; border-radius: 3px; font-size: .9em; }
+  pre.formula { background: #f5f5f7; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  .mermaid { background: #fafafa; border: 1px solid #e5e5ea; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>Rediseño del clasificador de causa por comprobante</h1>
+<p class="meta">shopify-sync · feature <code>clasificador-causa-comprobante</code> · 02/11/2026 · Propuesta para decidir, no implementada. Análisis completo con citas <code>ruta:línea</code> en <code>docs/analisis/2026-11-02-rediseno-clasificador.md</code>.</p>
+
+<h2>1. El problema de fondo</h2>
+<p>El clasificador tiene que distinguir, cuando Contabilium baja el stock del DOT, si esa baja es una <strong>venta de Shopify ya descontada en Shopify</strong> (no se vuelve a descontar) o una <strong>venta de mostrador u otra causa</strong> (sí se descuenta). Es el bug real del censo de agosto.</p>
+<p>El diseño actual supone que el comprobante que explica una baja cae en una <strong>ventana de tiempo fina</strong>: <code>[última corrida exitosa, ahora]</code>. Cuatro de los hallazgos del juez son ese mismo supuesto roto por lados distintos:</p>
+<table>
+  <tr><th>Hallazgo</th><th>Qué se rompe</th></tr>
+  <tr><td>Formato de fecha</td><td>La única forma probada de consultar <code>/search</code> (en <code>iey-ai</code>) usa <code>YYYY-MM-DD</code>: día completo. La ventana fina no se puede expresar en la consulta.</td></tr>
+  <tr><td>Timestamp tardío</td><td>El borde de la ventana se toma <em>después</em> de leer el stock (26 s a 5 min), no antes.</td></tr>
+  <tr><td>Ventana por par vs baseline por SKU</td><td>La ventana avanza aunque un SKU quede en error; en el reintento, su comprobante ya quedó afuera.</td></tr>
+  <tr><td>Checkpoint / doble uso</td><td>La ventana no recuerda qué comprobante ya se usó: uno ya contado puede explicar otra baja.</td></tr>
+</table>
+<div class="warn"><strong>Si la API solo filtra por día</strong> (lo más probable según el único uso probado), la ventana deja de distinguir nada: cada corrida ve todos los comprobantes del día de toda la cuenta. Lo único que evita contar dos veces un comprobante es <strong>recordar cuáles ya se usaron</strong>. Eso es estado persistente, no una ventana.</div>
+
+<h2>2. Alternativas</h2>
+
+<div class="grid">
+<div>
+<h3>A — Mantener la ventana y emparchar</h3>
+<p>Fechas en <code>YYYY-MM-DD</code> de Argentina, timestamp antes de leer, ventana por SKU, filtro por depósito antes de contar candidatos.</p>
+<pre class="mermaid">
+flowchart TD
+  L["cargar libreta: baseline y hora de lectura por SKU"] --> T["tInicioLectura = ahora"]
+  T --> S["leer stock de Contabilium, 52 paginas"]
+  S --> D{"algun SKU con delta negativo?"}
+  D -- no --> W["escribir sin clasificar"]
+  D -- si --> Q["/search por dias de Argentina"]
+  Q --> X["detalle de TODOS los comprobantes del dia, sin cache entre corridas"]
+  X --> F["filtrar deposito, Shopify, 25020 y fecha dentro de la ventana del SKU"]
+  F --> W2["escribir delta menos unidades explicadas"]
+  W2 --> G["guardar libreta"]
+</pre>
+<p><strong>Lo que no resuelve:</strong></p>
+<ul>
+  <li><strong>Costo:</strong> si la API filtra por día, cada corrida con una baja vuelve a pedir el día entero: 1.500 a 2.300 pedidos extra por día, compitiendo con <code>iey-ai</code>.</li>
+  <li>Depende de que la hora de emisión venga con la zona correcta (no verificado). Con 3 h de error, acredita de más: sobreventa.</li>
+  <li>Un comprobante emitido durante la lectura se pierde si el SKU no vuelve a cambiar: doble descuento permanente.</li>
+  <li>Sigue sin ver una venta de Shopify tapada por una reposición en el mismo intervalo.</li>
+</ul>
+</div>
+
+<div>
+<h3>B — Registro persistente de comprobantes (recomendada)</h3>
+<p>Pasar de <em>"qué comprobante cae en esta ventana"</em> a <em>"qué unidades vendidas por Shopify y facturadas contra el DOT todavía no se acreditaron"</em>. Es la contabilidad que ya pedía el ADR 0001.</p>
+<pre class="mermaid">
+flowchart TD
+  A0["una sola sesion de Contabilium por corrida"] --> L["cargar libreta del par y cache de comprobantes"]
+  L --> T["tInicioLectura = ahora, ANTES de leer"]
+  T --> S["leer stock de Contabilium"]
+  S --> P{"algun SKU con delta o credito pendiente?"}
+  P -- no --> C
+  P -- si --> R1["/search por dia de Argentina: hoy, y ayer una vez"]
+  R1 --> R2["descartar cotizaciones e ids ya vistos"]
+  R2 --> R3["detalle solo de ids nuevos, de a uno, con tope por corrida"]
+  R3 --> R4["registrar lineas Shopify por deposito y SKU"]
+  R4 --> C["credito por SKU = lineas del DOT no consumidas"]
+  C --> W["escribir shopify + delta + credito"]
+  W --> K["guardar baseline y consumos en la MISMA escritura"]
+  K --> Z["resumen impreso; si fallo, corrida en rojo"]
+</pre>
+</div>
+</div>
+
+<h3>Regla contable de B</h3>
+<pre class="formula">valor a escribir = Shopify actual + (Contabilium actual − baseline) + crédito pendiente del SKU
+
+crédito pendiente = unidades de comprobantes Shopify/25020 facturados contra el DOT,
+                    todavía no consumidas. Cada comprobante se consume una sola vez.</pre>
+
+<table>
+  <tr><th>Caso</th><th>Qué hace B</th></tr>
+  <tr><td>Censo de agosto: venta Shopify facturada a mano contra el DOT, baja de 1</td><td>Crédito 1: Shopify + (−1) + 1 = sin cambio. No se vuelve a descontar.</td></tr>
+  <tr><td>Baja de 3 = 1 venta Shopify + 2 de mostrador</td><td>Crédito 1, escribe −2. Exacto, sin "todo o nada".</td></tr>
+  <tr><td>Venta Shopify −1 + reposición +5 en el mismo intervalo</td><td>Delta +4, crédito 1, escribe +5. Correcto (A y el código actual escriben +4).</td></tr>
+  <tr><td>Dos comprobantes del mismo SKU</td><td>Se suman. Ya no hay "más de un candidato = desconocida".</td></tr>
+  <tr><td>Comprobante emitido durante la lectura</td><td>Se acredita en la corrida siguiente. Shopify queda 1 abajo una corrida: subventa, el lado seguro.</td></tr>
+  <tr><td>SKU en error</td><td>No avanza ni el baseline ni el consumo: el crédito espera al reintento.</td></tr>
+  <tr><td>Corrida interrumpida entre checkpoints</td><td>Baseline y consumo se escriben juntos: lo no alcanzado no tiene ninguno de los dos.</td></tr>
+  <tr><td>Comprobante ya usado</td><td>Marcado consumido: no puede explicar otra baja.</td></tr>
+</table>
+
+<h3>Modelo de datos de B</h3>
+<pre class="mermaid">
+erDiagram
+  CACHE_CUENTA ||--o{ COMPROBANTE_VISTO : contiene
+  COMPROBANTE_VISTO ||--o{ LINEA_SHOPIFY : "solo Shopify 25020 factura"
+  LIBRETA_PAR ||--o{ CONSUMO : registra
+  LINEA_SHOPIFY ||--o| CONSUMO : "se consume una vez"
+  CACHE_CUENTA {
+    string ultimoRefrescoOk
+    string diasCerrados
+  }
+  COMPROBANTE_VISTO {
+    int id PK
+    string dia "YYYY-MM-DD Argentina"
+    string tipoFc
+    string estado "ok pendiente ilegible"
+    int intentos
+  }
+  LINEA_SHOPIFY {
+    int comprobanteId FK
+    int inventario "deposito"
+    string sku "normalizado"
+    int cantidad
+    string fechaEmision
+  }
+  LIBRETA_PAR {
+    string skus
+    string contabilium "baseline por SKU"
+    string corte "primer uso del registro"
+  }
+  CONSUMO {
+    string clave "comprobanteId y sku"
+    int cantidad
+    string motivo "delta absoluto sembrado pre-corte"
+  }
+</pre>
+<p><strong>Dónde se guarda:</strong> <code>.cache/comprobantes.json</code> (caché de la cuenta, solo afecta el costo: si se pierde, se vuelve a pedir) y los consumos <strong>dentro de la libreta del par</strong>, en la misma escritura que el baseline (eso afecta la corrección). Viaja en el mismo <code>actions/cache</code> que hoy.</p>
+<p><strong>Primera corrida tras el deploy:</strong> se fija un "corte". Los comprobantes Shopify anteriores al corte se marcan como ya consumidos (no se sabe si el sync viejo los descontó dos veces; acreditarlos a ciegas puede inflar Shopify) y se informan en el resumen para revisión humana.</p>
+<p><strong>Reversible:</strong> borrar el caché y los consumos devuelve el sistema al delta puro.</p>
+
+<h3>C — Leer los comprobantes desde <code>iey-ai</code></h3>
+<p>Costo cero contra Contabilium, pero acopla este repo público a <code>iey-ai</code> (credenciales nuevas, superficie de seguridad), y <code>AGENTS.md</code> pone fuera de alcance su sync de ventas. Además necesitaría la misma contabilidad de B. Es una fase 2 posible, no algo ejecutable hoy.</p>
+
+<h2>3. Cobertura de los hallazgos del juez</h2>
+<table>
+  <tr><th>#</th><th>Hallazgo</th><th>A (parches)</th><th>B (registro)</th></tr>
+  <tr><td>1</td><td>Formato de fecha y costo por día</td><td class="parcial">Formato sí; costo no</td><td class="si">Sí; cada comprobante se pide una vez</td></tr>
+  <tr><td>2</td><td>Filtro por depósito</td><td class="si">Sí</td><td class="si">Sí; además suma unidades en vez de contar candidatos</td></tr>
+  <tr><td>3</td><td>Reintentos por id y 3 autenticaciones</td><td class="si">Sí</td><td class="si">Sí</td></tr>
+  <tr><td>4</td><td>Falla silenciosa</td><td class="si">Sí</td><td class="si">Sí</td></tr>
+  <tr><td>5</td><td>Timestamp tardío</td><td class="si">Sí</td><td class="si">Sí, y lo emitido durante la lectura no se pierde</td></tr>
+  <tr><td>6</td><td>Ventana por par vs baseline por SKU</td><td class="si">Sí, con hora por SKU</td><td class="si">Sí, sin ventana</td></tr>
+  <tr><td>7</td><td>Checkpoint y doble uso</td><td class="parcial">Parcial: se pierden créditos diferidos</td><td class="si">Sí: consumo atómico con el baseline</td></tr>
+  <tr><td>8</td><td>Inyección por argv</td><td class="si">Sí</td><td class="si">Sí</td></tr>
+  <tr><td>9</td><td>Contrato completo (10+ criterios)</td><td class="si">Sí</td><td class="si">Sí</td></tr>
+  <tr><td>+</td><td>Venta Shopify tapada por una reposición</td><td class="no">No, salvo pagar más costo</td><td class="si">Sí</td></tr>
+  <tr><td>+</td><td>Un comprobante ilegible tira el lote entero</td><td class="si">Sí</td><td class="si">Sí</td></tr>
+</table>
+
+<h2>4. Costo contra el cupo de 25 pedidos cada 10 s (compartido con <code>iey-ai</code>)</h2>
+<table>
+  <tr><th></th><th>Por corrida, régimen normal</th><th>Peor corrida</th><th>Por día (N = corridas con cambios)</th></tr>
+  <tr><td>A, si la API filtra por día</td><td>1-3 búsquedas + hasta 149 detalles</td><td>~152 pedidos (~225 s a 1,5 s)</td><td>~N × 75; el juez estimó 1.500-2.300</td></tr>
+  <tr><td><strong>B</strong></td><td>≤ 3 búsquedas + solo los ids nuevos</td><td>~66 pedidos, solo tras un corte o el primer deploy</td><td>~3N + 142; con N = 30, ~232</td></tr>
+</table>
+<p>Ritmo propuesto para comprobantes: <strong>un pedido cada 1,5 s o más</strong> (hoy el cliente va a 500 ms, unos 20 cada 10 s: sumado a los 18 de <code>iey-ai</code> pasa el límite si coinciden). Autenticación: de 3 por corrida a 1.</p>
+
+<div class="rec"><strong>Recomendación: B.</strong> Es la única que cierra los hallazgos 1, 5, 6 y 7 por diseño y no con cuatro parches. No depende de que la API filtre por hora, que es justo lo que nadie pudo verificar. Su costo escala con el volumen de la cuenta, no con corridas × día. Y cuando se equivoca, se equivoca hacia la subventa transitoria (se autocorrige), nunca hacia la sobreventa.</div>
+
+<h2>5. Decisiones que tenés que tomar</h2>
+<table>
+  <tr><th>#</th><th>Decisión</th><th>Recomendación</th></tr>
+  <tr><td>D-1</td><td>Alternativa</td><td>B</td></tr>
+  <tr><td>D-2</td><td>Crédito parcial (baja de 3 con comprobante de 1 escribe −2). Reemplaza la regla de "solo si coincide exacto" del primer juez, que con registro dejaría un doble descuento permanente.</td><td>Sí</td></tr>
+  <tr><td>D-3</td><td>Clasificar con delta de cualquier signo, y revisar aunque no cambie el stock los SKUs con crédito pendiente</td><td>Sí</td></tr>
+  <tr><td>D-4</td><td>Clasificador encendido también en <code>--full</code></td><td>Sí (con B el costo ya no depende de cuánto hace que no corre)</td></tr>
+  <tr><td>D-5</td><td>Si el clasificador falla: corrida en rojo enseguida, o tras 3 corridas seguidas</td><td>Enseguida, después de aplicar las escrituras (invariante 5: el tilde verde vacío)</td></tr>
+  <tr><td>D-6</td><td>Parámetros</td><td>Tope 60 detalles por corrida, ≥ 1,5 s entre pedidos, retención 7 días (30 para créditos sin consumir), margen 5 min</td></tr>
+  <tr><td>D-7</td><td><code>ultimaCorridaExitosa</code> deja de usarse: retirar el campo y su test (el requisito que prueba se reemplaza). Por <code>AGENTS.md</code>, borrar un test necesita tu OK explícito.</td><td>Retirar</td></tr>
+  <tr><td>D-8</td><td>Notas de crédito de Shopify contra el DOT (cancelaciones)</td><td>Fuera de alcance; solo contarlas en el resumen</td></tr>
+</table>
+
+<h2>6. Lo que no se puede verificar sin vos</h2>
+<p>Con tus credenciales en Postman, solo GET (lectura), sobre comprobantes conocidos del censo de agosto:</p>
+<table>
+  <tr><th>#</th><th>Pedido</th><th>Qué distingue</th></tr>
+  <tr><td>H-1</td><td><code>GET /api/comprobantes/search?fechaDesde=2026-08-12&amp;fechaHasta=2026-08-12&amp;page=1</code></td><td>Si aparecen 177960828, 177960885 y 177960937; el total del día; si cada ítem trae fecha con hora.</td></tr>
+  <tr><td>H-2</td><td><code>GET /api/comprobantes/search?fechaDesde=2026-08-12T19:15:00&amp;fechaHasta=2026-08-12T19:16:00&amp;page=1</code></td><td>Error 4xx: rechaza la hora. Mismo total que H-1: la ignora. Trae 177960885 y 177960937 pero no 177960828: filtra por hora. Vacío: la interpreta mal sin avisar.</td></tr>
+  <tr><td>H-3</td><td><code>GET /api/comprobantes/search?fechaDesde=2026-07-29&amp;fechaHasta=2026-07-29&amp;page=1</code>, buscar 176459710</td><td>Si filtra por la fecha de emisión real y no por la de la orden.</td></tr>
+  <tr><td>H-4</td><td><code>GET /api/comprobantes/?id=177960828</code></td><td>El texto crudo de <code>FechaEmision</code>: si trae zona horaria, si trae hora.</td></tr>
+</table>
+<p>Y dos preguntas: <strong>¿al facturar a mano en Contabilium se puede cargar una fecha de emisión anterior a hoy, y se hace?</strong> ¿Los disparos de producción (cron-job.org) mandan <code>dry_run=false</code>? El default del workflow es <code>true</code>, y en ese modo ni el baseline ni los consumos avanzan nunca.</p>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", flowchart: { htmlLabels: true } });
+</script>
+</body>
+</html>

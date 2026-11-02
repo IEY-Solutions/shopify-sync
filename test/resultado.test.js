@@ -157,3 +157,43 @@ test("el umbral de evaluarCorridaMultiPar se puede pasar y se aplica a cada par"
   assert.equal(evaluarCorridaMultiPar(porPar, 0.5).ok, true);
   assert.equal(evaluarCorridaMultiPar(porPar, 0.1).ok, false);
 });
+
+// -----------------------------------------------------------------------------
+// R-12 / CA-12 (clasificador-causa-comprobante, diseño B, 02/11/2026): un
+// clasificador que FALLO pone la corrida en rojo aunque todo lo demas este bien
+// (decision D-5 de la persona: "Rojo enseguida (Recommended)"). Un clasificador
+// roto con exit 0 es exactamente el "tilde verde vacio" del invariante 5.
+// -----------------------------------------------------------------------------
+
+test("CA-12: clasificador 'fallo' da ok:false aunque la corrida haya sincronizado todo, con un motivo que nombra al clasificador", () => {
+  const v = evaluarCorrida(resumen({ total: 2562, actualizado: 12, saltado: 2550, clasificador: "fallo" }));
+  assert.equal(v.ok, false);
+  assert.match(v.motivo, /clasificador/i);
+});
+
+test("CA-12: clasificador 'ok', 'parcial' (tope) y 'no_requerido' no cambian el veredicto", () => {
+  for (const estado of ["ok", "parcial", "no_requerido"]) {
+    assert.equal(evaluarCorrida(resumen({ total: 2562, saltado: 2562, clasificador: estado })).ok, true, estado);
+  }
+});
+
+test("CA-12: un resumen sin el campo clasificador (syncTodos legado) se evalua igual que antes", () => {
+  assert.equal(evaluarCorrida(resumen({ total: 2562, saltado: 2562 })).ok, true);
+});
+
+test("CA-12: los chequeos de siempre siguen primero: 0 SKUs sigue fallando por eso, tambien con clasificador ok", () => {
+  const v = evaluarCorrida(resumen({ total: 0, clasificador: "ok" }));
+  assert.equal(v.ok, false);
+  assert.match(v.motivo, /no devolvio ningun SKU/);
+});
+
+test("CA-12: en multi-par, un par con clasificador 'fallo' pone la corrida entera en rojo", () => {
+  const v = evaluarCorridaMultiPar({
+    dot: resumen({ total: 100, sin_cambios: 100, clasificador: "fallo" }),
+    "galerias-pacifico": resumen({ total: 50, sin_cambios: 50, clasificador: "no_requerido" }),
+  });
+  assert.equal(v.ok, false);
+  assert.equal(v.detalle.dot.ok, false);
+  assert.match(v.detalle.dot.motivo, /clasificador/i);
+  assert.equal(v.detalle["galerias-pacifico"].ok, true);
+});

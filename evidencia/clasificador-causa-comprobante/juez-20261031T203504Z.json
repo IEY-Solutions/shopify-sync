@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "feature": "clasificador-causa-comprobante",
+  "fecha": "2026-10-31T20:35:04+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "1f7309fa5b2fdce05131ab99c6fc06fef0f95fa9",
+    "diff_sha256": "34a43cbce19b8d91270328c4e909ef99adc75d278cee2fa6c477524cd4e049b8"
+  },
+  "oraculo_sha256": "d44ccfc0b5f6fe056e907ea9a543c1591ead847e6084b612c275709c48aa28ca",
+  "contrato_sha256": "bee23b1aae65db841182c2d77287aa23a8f5ee721646bac4838d0e0d85a74a0a",
+  "evidencia_id": "clasificador-causa-comprobante/20261031T203335Z",
+  "veredicto": "RECHAZA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T203335Z",
+      "motivo": "Los 14 tests pasaron y el comando salió con exit 0. Las URLs pedidas usan fechaDesde, fechaHasta y page, y un assert exige que la query no lleve id. Para fetchComprobantesDetalle hay tests que exigen una sola autenticación por lote, una concurrencia máxima de 1 (secuencial, sin Promise.all) y un delay entre pedidos. También quedan probados los reintentos ante 429 y 503 con MAX_INTENTOS. El código de src/contabilium.js coincide: usa un for con await delay(DELAY_ENTRE_REQUESTS_MS) y reusa un único token."
+    },
+    {
+      "id": "CA-3",
+      "cumple": false,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T203335Z",
+      "motivo": "El comando salió verde, pero el test no prueba lo que exige el texto corregido de CA-3. Primero, nadie cuenta las invocaciones de fetchComprobantesDetalle. El helper solo anota cada id en llamadas.fetchComprobanteById, así que una implementación que llamara fetchComprobantesDetalle([id]) una vez por id pasaría igual. Segundo, nada verifica que buscarComprobantes se llame sin depósito: el helper descarta los demás argumentos y el test solo mira .length. Los nombres de los tests en el stdout siguen diciendo 'fetchComprobanteById', o sea que no se actualizaron a la interfaz corregida."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T203335Z",
+      "motivo": "Los 4 tests pasaron con exit 0, usando el fake de fetchComprobantesDetalle, que es el que consume ejecutarPar. En el caso real del censo (stock de 10 a 8, comprobante Shopify/25020/DOT con Cantidad 2) no se llama a setearStock y el baseline avanza a 8. En el caso nuevo de coincidencia parcial (delta -3, comprobante de 1) se cuenta causa_desconocida=1 y se escribe 7, o sea el delta completo. Hay además controles negativos con una venta de mostrador y con otro depósito. sync.js pasa deltaMagnitud=calc.delta y determinarCausaSku compara la cantidad contra Math.abs del delta."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T203335Z",
+      "motivo": "Los 9 tests pasaron con exit 0. Leí sync.yml (líneas 80-105): los dos steps reciben ESCRITURA_ABSOLUTA y MOTIVO por env:, ningún bloque run: interpola ${{ inputs.escritura_absoluta }} ni ${{ inputs.motivo }}, y el comando real los usa entre comillas (\"$ESCRITURA_ABSOLUTA\", \"$MOTIVO\")."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T203335Z",
+      "motivo": "Los 8 tests pasaron con exit 0. El test I-2 mete una demora artificial y confirma que ultimaCorridaExitosa queda cerca de la lectura del stock y no del fin de la corrida. En src/sync.js:516-523, timestampLecturaStock se toma justo después de deps.getStockDeposito y es lo que se guarda en la línea 710. Con corrida previa, la ventana arranca en ultimaCorridaExitosa; sin ella, cae al default de 2 horas, y eso se prueba tanto en la función pura como pasando por ejecutarPar."
+    }
+  ],
+  "hallazgos": [
+    "CA-3: el oráculo no cuenta las llamadas a fetchComprobantesDetalle. El helper (_helpers-clasificador.js) registra ids sueltos en llamadas.fetchComprobanteById, así que una llamada por id o varias llamadas en lote pasarían igual. El texto de CA-3 exige 'UNA vez con la lista completa de ids'.",
+    "CA-3: el oráculo no verifica que buscarComprobantes se llame sin depósito. El fake guarda solo el primer argumento como { ventana } y test/clasificador-costo-acotado.test.js solo mira .length.",
+    "No es un fallo de ningún CA, pero cuenta como riesgo de producción contra R-1/B-1: el comentario de src/contabilium.js dice que fechaDesde y fechaHasta son 'YYYY-MM-DD', con granularidad de día y no timestamps ISO. Sin embargo, sync.js le pasa a buscarComprobantes la ventana de calcularVentanaComprobantes, que es ISO completo, y el test CA-1 llama con fechas 'YYYY-MM-DD' de mano, así que no lo detecta. Si la API rechaza el formato ISO, cada búsqueda cae en { fallo: true }: todo SKU con delta negativo termina en causa_desconocida y el clasificador no protege nunca.",
+    "Este veredicto se dio en una sesión con herramientas de solo lectura: no corre `arn juzgar` ni reemplaza al veredicto que valida arn. El ARN-E146 del hook se resuelve corriendo `arn juzgar --host claude`, y eso no le toca al juez."
+  ]
+}

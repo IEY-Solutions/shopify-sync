@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "feature": "clasificador-causa-comprobante",
+  "fecha": "2026-10-31T19:25:32+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "1f7309fa5b2fdce05131ab99c6fc06fef0f95fa9",
+    "diff_sha256": "a4e76e1ede86d186cf2ac71fc9dde6599dd5dea7c5d8e040791e9c02a90bd362"
+  },
+  "oraculo_sha256": "3e9ef34a84d035ac749e4f887a98d8f5eac3186cf99e07b683dc8e6814ed2cf1",
+  "contrato_sha256": "787b097024716ec398f2533f18bf044531c01e42dfbfff68451b3fa7070dbd29",
+  "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+  "veredicto": "APRUEBA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/comprobantes-contabilium.test.js` salió con exit 0 y 8/8 tests pasaron. Cubre la paginación por TotalItems/pageSize, el reintento ante un 429 con Retry-After, la rendición tras MAX_INTENTOS con 503 y 500, y el filtro por depositoId y ventana. En el diff, src/contabilium.js solo suma funciones nuevas que reusan conReintentos/authenticate/delay, y getStockDeposito queda sin cambios."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/clasificador-causa.test.js` salió con exit 0 y 10/10 tests pasaron. Shopify/25020/Inventario del par da venta_shopify. Otro depósito, otro Origen, otra integración o IDIntegracion ausente dan otra_causa. src/clasificador-causa.js no hace IO."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/clasificador-costo-acotado.test.js` salió con exit 0 y 4/4 tests pasaron. buscarComprobantes se llama 1 vez por corrida. fetchComprobanteById escala con los comprobantes de la ventana: hay 5 llamadas con 2 candidatos, así que no es una por SKU. Sin candidatos no hay ninguna llamada, y 14 SKUs extra sin delta negativo no suman llamadas."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/clasificador-huecos.test.js` salió con exit 0 y 5/5 tests pasaron. Cubre campos ausentes, falla de la búsqueda, falla del detalle y más de un candidato. En todos se aplica el delta puro (setearStock 1 vez, cantidad 5) y causa_desconocida queda como contador numérico agregado de la corrida."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/regresion-censo-agosto.test.js` salió con exit 0 y 3/3 tests pasaron. Con un comprobante Shopify/25020/Inventario=DOT y delta negativo, setearStock no se llama y el baseline avanza. Los dos controles negativos (venta de mostrador y comprobante de Shopify de otro depósito) sí aplican el delta."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/compuerta-manual-workflow.test.js` salió con exit 0 y 6/6 tests pasaron. sync.yml declara escritura_absoluta y motivo con default \"\". El paso 'Validar compuerta manual' hace exit 1 si falta el motivo, imprime alcance y motivo con ::warning y pasa los flags al comando de sync."
+    },
+    {
+      "id": "CA-7",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/compuerta-manual-absoluta.test.js` salió con exit 0 y 4/4 tests pasaron. Un SKU alcanzado no consulta comprobantes, escribe el absoluto (7, no el delta) y la libreta queda resembrada en 7 en skus y contabilium. 'todos' alcanza a todos los SKUs, y un SKU no alcanzado sigue por delta en la misma corrida."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/libreta-ultima-corrida-exitosa.test.js` salió con exit 0 y 6/6 tests pasaron. ultimaCorridaExitosa queda en ISO tras una corrida sin error, por par en correrTodosLosPares, y sigue en null si ejecutarPar rechaza. Además, los tests de regresión agregados confirman que ni los checkpoints intermedios ni syncUnSku borran el valor previo."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/ventana-comprobantes.test.js` salió con exit 0 y 7/7 tests pasaron. Con una corrida exitosa previa, la ventana es [ultimaCorridaExitosa, ahora]. Sin ella, por null, undefined o libreta vieja, es de 2 h y desde siempre está presente. ejecutarPar le pasa a buscarComprobantes el desde correcto."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T192409Z",
+      "motivo": "`node --test test/clasificador-modo-full.test.js` salió con exit 0 y 3/3 tests pasaron. Con full:true hay 0 llamadas a buscarComprobantes y a fetchComprobanteById, causa_desconocida=2 y se aplica el delta puro. El control sin --full sí consulta."
+    }
+  ],
+  "hallazgos": [
+    "Observación que no bloquea (ningún CA la cubre): en .github/workflows/sync.yml, los pasos 'Validar compuerta manual' y 'Correr sync' interpolan ${{ inputs.escritura_absoluta }} y ${{ inputs.motivo }} directo en el script de shell. Un motivo con comillas o metacaracteres se interpreta como shell. La superficie queda acotada a quien puede disparar workflow_dispatch."
+  ]
+}

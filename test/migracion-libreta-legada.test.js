@@ -326,18 +326,107 @@ test("correrTodosLosPares migra la libreta legada del DOT antes de la primera es
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rutaIndex = join(__dirname, "..", "src", "index.js");
 
-test("src/index.js importa correrTodosLosPares desde ./sync.js (no lo declara local)", () => {
-  const fuente = readFileSync(rutaIndex, "utf-8");
+// Movido el 02/11/2026 por decision de la persona ("Mover el chequeo a main.js",
+// R-14 de clasificador-causa-comprobante): desde esa feature el entrypoint es la
+// cadena src/index.js -> src/main.js -> src/sync.js (index.js solo importa
+// dotenv/config y { main }, ver test/index-argv.test.js, CA-13 ronda 4). La
+// propiedad protegida es la MISMA (R-11 de docs/contratos/deltas-dot-mas-isla-
+// galerias.md:120-122): lo que corre en produccion es el correrTodosLosPares de
+// sync.js, que migra la libreta legada del DOT, y no una copia local. Se verifica
+// cada eslabon, sin comentarios (un import comentado no cuenta).
+test("src/index.js -> src/main.js -> src/sync.js: el entrypoint real usa el correrTodosLosPares de ./sync.js (no lo declara local)", () => {
+  const sinComentarios = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+  // Nombres importados (sin alias) de `import { ... } from "<modulo>"`.
+  const importadosSinAlias = (codigo, modulo) => {
+    const esc = modulo.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    const nombres = [];
+    for (const m of codigo.matchAll(new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*["']${esc}["']`, "g"))) {
+      for (const parte of m[1].split(",")) {
+        const p = parte.trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(p)) nombres.push(p); // `x as y` no cuenta
+      }
+    }
+    return nombres;
+  };
 
-  const importaDeSync = /import\s*\{[^}]*\bcorrerTodosLosPares\b[^}]*\}\s*from\s*["']\.\/sync\.js["']/.test(
-    fuente
-  );
+  const fuenteIndex = sinComentarios(readFileSync(rutaIndex, "utf-8"));
+  const rutaMain = join(__dirname, "..", "src", "main.js");
+  const fuenteMain = sinComentarios(readFileSync(rutaMain, "utf-8"));
+
+  // Eslabon 1: index.js -> main.js
   assert.ok(
-    importaDeSync,
-    "src/index.js tiene que importar { correrTodosLosPares } desde \"./sync.js\"; " +
+    importadosSinAlias(fuenteIndex, "./main.js").includes("main"),
+    "src/index.js tiene que importar { main } desde \"./main.js\"; si el entrypoint no " +
+      "pasa por main.js, nada garantiza que corra el correrTodosLosPares de sync.js, que " +
+      "es el que migra la libreta legada del DOT (R-11)"
+  );
+
+  // Eslabon 2: main.js -> sync.js (sin alias: el nombre local ES el de sync.js)
+  assert.ok(
+    importadosSinAlias(fuenteMain, "./sync.js").includes("correrTodosLosPares"),
+    "src/main.js tiene que importar { correrTodosLosPares } desde \"./sync.js\"; " +
       "si no lo importa de ahi, el entrypoint real puede seguir corriendo una copia " +
       "local que nunca migra la libreta legada del DOT (R-11)"
   );
+
+  // Eslabon 3: main.js no tiene su propia copia (ni la pisa)
+  const declaraciones = [
+    [/\bfunction\s*\*?\s*correrTodosLosPares\s*\(/, "function correrTodosLosPares(...)"],
+    [/\b(?:const|let|var)\s+correrTodosLosPares\b/, "const/let/var correrTodosLosPares"],
+    [/\b(?:const|let|var)\s*[{[][^=]*\bcorrerTodosLosPares\b[^=]*[}\]]\s*=/, "una desestructuracion que declara correrTodosLosPares"],
+    [/\bclass\s+correrTodosLosPares\b/, "class correrTodosLosPares"],
+    [/(?<![\w$.])correrTodosLosPares\s*(?:=(?![=>])|\|\|=|&&=|\?\?=)/, "una asignacion a correrTodosLosPares"],
+  ];
+  for (const [re, que] of declaraciones) {
+    assert.doesNotMatch(
+      fuenteMain,
+      re,
+      `src/main.js no puede declarar ${que} local: esa copia seria la que corre en ` +
+        "produccion y nunca migraria la libreta legada del DOT (R-11), aunque sync.js " +
+        "SI exporte su propia version"
+    );
+  }
+
+  // Eslabon 4 (ronda 5b, nota 7 de revisor-alcance): los eslabones 2 y 3 se
+  // cumplian con una copia local con OTRO nombre usada como respaldo
+  // (`deps.correrTodosLosPares ?? correrPares`). No se fija un estilo de
+  // cableado; se exigen tres cosas que cualquier cableado correcto cumple:
+  //   4a. el correrTodosLosPares importado se usa como VALOR fuera del import
+  //       (no solo `deps.correrTodosLosPares` ni la clave `correrTodosLosPares:`):
+  //       un import muerto no cablea nada;
+  //   4b. si main.js tiene un respaldo `deps.correrTodosLosPares ?? X` / `|| X`, o
+  //       una desestructuracion `correrTodosLosPares: y = X`, X es el importado;
+  //   4c. main.js no menciona ejecutarPar ni migrarLibretaLegada: toda copia del
+  //       orquestador, con cualquier nombre, necesita al menos uno de los dos, y
+  //       main.js no tiene por que usarlos (DISENO-INTERFAZ 7.1).
+  const sinImports = fuenteMain.replace(/^\s*import\s[\s\S]*?from\s*["'][^"']+["']\s*;?/gm, "");
+  assert.match(
+    sinImports,
+    /(?<![\w$."'`])correrTodosLosPares(?![\w$])(?!\s*:)/,
+    "src/main.js tiene que usar como valor el correrTodosLosPares importado de ./sync.js " +
+      "(por ejemplo como respaldo de deps.correrTodosLosPares); si solo lo importa, lo que " +
+      "corre en produccion es otra cosa (R-11)"
+  );
+  const respaldos = [
+    ...fuenteMain.matchAll(/deps\s*\.\s*correrTodosLosPares\s*(?:\?\?|\|\|)\s*([A-Za-z_$][\w$]*)/g),
+    ...fuenteMain.matchAll(/\bcorrerTodosLosPares\s*:\s*[A-Za-z_$][\w$]*\s*=(?![=>])\s*([A-Za-z_$][\w$]*)/g),
+  ].map((m) => m[1]);
+  for (const x of respaldos) {
+    assert.equal(
+      x,
+      "correrTodosLosPares",
+      `src/main.js usa "${x}" como respaldo de deps.correrTodosLosPares: tiene que ser el ` +
+        "correrTodosLosPares importado de ./sync.js, que migra la libreta legada del DOT (R-11)"
+    );
+  }
+  for (const pieza of ["ejecutarPar", "migrarLibretaLegada"]) {
+    assert.doesNotMatch(
+      fuenteMain,
+      new RegExp(`\\b${pieza}\\b`),
+      `src/main.js menciona ${pieza}: eso huele a una copia local del orquestador; el ` +
+        "entrypoint real tiene que delegar en el correrTodosLosPares de ./sync.js (R-11)"
+    );
+  }
 });
 
 test("src/index.js NO declara su propia funcion local correrTodosLosPares", () => {

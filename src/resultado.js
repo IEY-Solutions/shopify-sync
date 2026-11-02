@@ -58,6 +58,19 @@ export function evaluarCorrida(resumen, umbral = UMBRAL_ERROR_DEFECTO) {
     };
   }
 
+  // R-12 / D-5: un clasificador en `fallo` (refresco del registro de
+  // comprobantes caido o un detalle que fallo en esta corrida) deja la corrida
+  // en rojo, despues de haber aplicado las escrituras y guardado la libreta.
+  // `parcial` (solo por el tope), `ok` y `no_requerido` no cambian el veredicto.
+  if (resumen.clasificador === "fallo") {
+    return {
+      ok: false,
+      motivo:
+        "el clasificador de causa por comprobante fallo en esta corrida (ver [CLASIFICADOR][ERROR]): " +
+        "los deltas se aplicaron sin credito.",
+    };
+  }
+
   return { ok: true, motivo: null };
 }
 
@@ -70,7 +83,41 @@ export function evaluarCorrida(resumen, umbral = UMBRAL_ERROR_DEFECTO) {
 // verde: nunca "no hice nada en ningun lado" == exito (mismo principio de H3).
 //   porPar: { [stateKey]: resumenDeSyncTodos | { pendiente: true, motivo } }
 // Devuelve { ok, motivo, detalle: { [stateKey]: { ok, motivo, pendiente } } }
-export function evaluarCorridaMultiPar(porPar, umbral = UMBRAL_ERROR_DEFECTO) {
+// Con opciones.escrituraAbsoluta = Set (R-15, DISENO 6.1), un SKU de la
+// compuerta va a compuertaNoAplicados si (a) no se aplico en ningun par, o (b)
+// en algun par no pendiente que lo tenia pedido no quedo ni aplicado ni
+// no_activado. Eso pone la corrida en rojo sin cambiar detalle[par].ok.
+export function evaluarCorridaMultiPar(porPar, umbral = UMBRAL_ERROR_DEFECTO, opciones = {}) {
+  const compuertaNoAplicados = compuertaNoAplicadaEn(porPar, opciones?.escrituraAbsoluta);
+  const v = evaluarParesSinCompuerta(porPar, umbral);
+  if (v.ok && compuertaNoAplicados.length > 0) {
+    return {
+      ok: false,
+      motivo: `${compuertaNoAplicados.length} SKU(s) de la compuerta ESCRITURA_ABSOLUTA no quedaron aplicados (ver la linea de la compuerta)`,
+      detalle: v.detalle,
+      compuertaNoAplicados,
+    };
+  }
+  return { ...v, compuertaNoAplicados };
+}
+
+function compuertaNoAplicadaEn(porPar, escrituraAbsoluta) {
+  if (!(escrituraAbsoluta instanceof Set)) return [];
+  const pares = Object.values(porPar ?? {}).filter((r) => r && !r.pendiente);
+  const noAplicados = [];
+  for (const sku of escrituraAbsoluta) {
+    const aplicadoEnAlguno = pares.some((r) => r.compuertaSkus?.aplicados?.includes(sku));
+    const fallidoEnAlguno = pares.some((r) => {
+      const c = r.compuertaSkus;
+      if (!c?.pedidos?.includes(sku)) return false;
+      return !c.aplicados?.includes(sku) && !c.noActivados?.includes(sku);
+    });
+    if (!aplicadoEnAlguno || fallidoEnAlguno) noAplicados.push(sku);
+  }
+  return noAplicados;
+}
+
+function evaluarParesSinCompuerta(porPar, umbral) {
   const detalle = {};
   let algunoActivo = false;
   let todosOk = true;

@@ -26,6 +26,14 @@ on:
         type: choice
         options: ["sync", "locations"]
         default: "sync"
+      escritura_absoluta:
+        description: "SKUs separados por coma, o \"todos\": fuerza el ABSOLUTO de Contabilium en esta corrida (compuerta manual auditada, ADR 0001). Vacio = apagado."
+        type: string
+        default: ""
+      motivo:
+        description: "Obligatorio si escritura_absoluta no esta vacio: por que se fuerza el absoluto."
+        type: string
+        default: ""
 
 # No arrancar una corrida nueva si la anterior sigue en curso (anti-solapamiento).
 concurrency:
@@ -65,6 +73,29 @@ jobs:
           restore-keys: |
             sync-state-
 
+      # Compuerta manual auditada (R-6, ADR 0001): escritura_absoluta requiere
+      # motivo explicito. Falla ANTES de correr el sync si falta, y deja el
+      # alcance/motivo impresos en el log de esta corrida (auditable sin
+      # tocar ningun archivo del repo).
+      - name: Validar compuerta manual
+        env:
+          ESCRITURA_ABSOLUTA: ${{ inputs.escritura_absoluta }}
+          MOTIVO: ${{ inputs.motivo }}
+        run: |
+          # Un motivo de solo espacios (espacios, tabs, saltos de linea) cuenta como vacio.
+          if [ -n "$ESCRITURA_ABSOLUTA" ] && [ -z "${MOTIVO//[[:space:]]/}" ]; then
+            echo "::error::escritura_absoluta requiere un motivo no vacio (compuerta auditada, ADR 0001)"
+            exit 1
+          fi
+          if [ -n "$ESCRITURA_ABSOLUTA" ]; then
+            # N-10: los valores son texto libre. Van SOLO dentro de los datos de
+            # este ::warning::, con %, CR y LF escapados (% primero), para que no
+            # partan la linea ni formen otro comando (:: o el formato viejo ##[).
+            a="${ESCRITURA_ABSOLUTA//'%'/%25}"; a="${a//$'\r'/%0D}"; a="${a//$'\n'/%0A}"
+            m="${MOTIVO//'%'/%25}"; m="${m//$'\r'/%0D}"; m="${m//$'\n'/%0A}"
+            echo "::warning::ESCRITURA ABSOLUTA activa. Alcance: $a — Motivo: $m"
+          fi
+
       # --full ignora la libreta local y verifica los 2562 SKUs contra Shopify.
       # Es el modo reconciliacion: detecta la deriva que el incremental no ve,
       # porque el incremental confia en la libreta y la libreta espeja Contabilium.
@@ -76,6 +107,9 @@ jobs:
             node src/index.js ${{ inputs.full == 'true' && '--full' || '' }}
           fi
         env:
+          # La compuerta viaja SOLO por entorno (R-6/R-13): index.js la lee de
+          # ESCRITURA_ABSOLUTA. Nunca por argv ni interpolada en el script.
+          ESCRITURA_ABSOLUTA: ${{ inputs.escritura_absoluta }}
           SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
           SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
           SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}

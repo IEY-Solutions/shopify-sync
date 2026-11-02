@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "feature": "clasificador-causa-comprobante",
+  "fecha": "2026-11-02T16:14:40+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "1f7309fa5b2fdce05131ab99c6fc06fef0f95fa9",
+    "diff_sha256": "1b329e2b330bf4ef09f082addae9f928008c50ed5d5d973c9fce8fb69069ca4f"
+  },
+  "oraculo_sha256": "d09ff45450d25c6f8480cf8173239d7929a46b5d7e24bbe1a15e0e34fd207a87",
+  "contrato_sha256": "3eddb25f8262d0034519d4adab0bd38ce7180db3c66e122e9e5c5c32e446b099",
+  "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+  "veredicto": "APRUEBA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "El comando sale con exit 0 y pasan 19 de 19 tests. Cubren: fechas YYYY-MM-DD de Argentina (22:30 ART da 2026-08-12), detalle secuencial con un ritmo de al menos 1500 ms, una sola autenticación por corrida, tope de 5 min compartido entre stock, /search y detalle, ausencia de fetchComprobanteById en DEPS_REALES, y definitivo solo ante 400, 404 o un 200 que no se puede interpretar (429, 5xx, 401, 403 y 422 no lo son)."
+    },
+    {
+      "id": "CA-2",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 16 de 16 tests. El comprobante real 177960828 da 2026-08-12T22:14:29.660Z con el proceso en TZ=UTC. Pasan la normalización con trim y mayúsculas, el descarte de CENTRAL, FULL ML, Origen vacío, 24528, COT y líneas sin Codigo, y la NCB reconocida como nota de crédito. src/clasificador-causa.js no usa new Date sobre textos sin zona."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 6 de 6 tests. No se repiden ids ya vistos, un COT no genera pedido de detalle, una corrida sin deltas no llama a /search, con tope 60 quedan 150 → 60, 90 pendientes y 30 pendientes, y hay un solo refresco por corrida."
+    },
+    {
+      "id": "CA-4",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 5 de 5 tests. Con /search caído se aplica el delta y se cuenta causa_desconocida. Un id que falla entre 5 queda pendiente y los otros 4 se registran. Pasa a ilegible al tercer error definitivo y desde ahí la corrida da ok. Un error transitorio nunca lleva a ilegible y la corrida queda ok:false. Ninguna línea fuera de [SET] o [DRY] nombra un SKU de causa_desconocida."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 11 de 11 tests. En el censo de agosto (177960828) no se escribe y la línea queda consumida. Con −3 y crédito 1 se escribe −2, con +4 y crédito 1 se escribe +5. No hay reacreditación, se respeta el margen y se saltea el atajo incremental. Los prefijos FUNDA-X-IPHONE16 y FUNDA-X-IPHONE16PRO quedan aislados en los dos sentidos."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 17 de 17 tests. Los inputs tienen default vacío, no hay ${{ }} en run: y los valores no van por argv. Un motivo vacío o de solo espacios hace fallar el step. Con payloads que traen CR, LF, :: o ##[, el simulador del runner ve un único ::warning:: o ::error::, y los controles positivos detectan inyección. sync.yml aplica el arreglo (a): el valor va solo dentro del ::warning::, con %, CR y LF escapados."
+    },
+    {
+      "id": "CA-7",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 12 de 12 tests, casos a-h. Cubren: escritura del absoluto, resembradoEn igual a T, consumo con motivo absoluto o sembrado, línea tardía anterior consumida, línea posterior acreditada, pendiente por tope, /search caído, siembra vía syncUnSku, y que ningún checkpoint ni syncUnSku borre resembradoEn. (g) y (h) corren encerrados en un directorio temporal."
+    },
+    {
+      "id": "CA-8",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 29 de 29 tests en los tres archivos. Baseline y consumo se escriben en la misma escritura del checkpoint. Un SKU en error, no_activado o ambiguo no consume crédito; consumo y baseline avanzan solo con actualizado, sin_cambios o dry, y en DRY_RUN no se persisten (sync.js:1104). La libreta no cambia en DRY_RUN. Las podas se alinean por día ART (30 días y 1 hora no se reacredita) y ultimaCorridaExitosa ya no figura en la libreta."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 8 de 8 tests. Después de medianoche consulta ayer y hoy y cierra ayer; en el mismo día consulta solo hoy. Con 4 días de atraso consulta 4 días más hoy, con 10 días consulta como máximo 7. Un refresco fallido no avanza la fecha, y tInicioLectura se toma antes de getStockDeposito."
+    },
+    {
+      "id": "CA-10",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 2 de 2 tests. En --full, con 30 SKUs con delta, hay una sola búsqueda y como máximo un pedido de detalle, y se aplica la misma regla contable que en incremental."
+    },
+    {
+      "id": "CA-11",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 3 de 3 tests. Una línea anterior al corte se consume como pre-corte, no modifica el valor escrito y suma a creditos_pre_corte; una línea posterior se acredita en la corrida siguiente; un corte existente no se reinicia."
+    },
+    {
+      "id": "CA-12",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 26 de 26 tests. Hay una sola línea [CLASIFICADOR][ERROR] por corrida. El resumen trae clasificador=fallo y todos los contadores nuevos, la libreta se guarda y evaluarCorrida da ok:false. Sin deltas, el estado es no_requerido y da ok:true."
+    },
+    {
+      "id": "CA-13",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 18 de 18 tests. Un token desconocido sale con 2 sin hacer requests. ESCRITURA_ABSOLUTA=--full o --cron no cambia el modo, y SKU-A llega a correrTodosLosPares en el modo por defecto y en --full. --qty 2.5, 1e-1, 3.0001 y 0.5 salen con 2; 3 y 3.0 dan 3. src/argv.js usa parseArgs estricto y Number.isSafeInteger."
+    },
+    {
+      "id": "CA-14",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "npm test sale con exit 0 y pasan 341 de 341, sin skip ni todo (verificado con grep). test/libreta-ultima-corrida-exitosa.test.js no existe (Glob vacío). El caso movido de la migración verifica la cadena index → main → sync con el eslabón 4. main.js usa deps.correrTodosLosPares ?? correrTodosLosPares y no menciona ejecutarPar ni migrarLibretaLegada. oraculo_sha256 coincide con el congelado."
+    },
+    {
+      "id": "CA-15",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261102T161345Z",
+      "motivo": "Exit 0, 28 de 28 tests, en el modo por defecto y en --full. Dan rojo: SKU inexistente, no_encontrado más no_activado, error o ambiguo en el DOT. Da verde: aplicado en un par y no_activado en el otro. DRY_RUN y todos se comportan como pide el criterio. Los valores con salto de línea, :: o ##[ se rechazan con salida 2 antes de llamar a cualquier dependencia (parsearEscrituraAbsoluta). Los casos puros de evaluarCorridaMultiPar mantienen la compatibilidad."
+    }
+  ],
+  "hallazgos": []
+}

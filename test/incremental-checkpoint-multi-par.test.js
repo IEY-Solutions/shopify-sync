@@ -30,6 +30,8 @@ import { join } from "node:path";
 
 import { construirPares } from "../src/pares.js";
 import { ejecutarPar, cargarLibretaCompleta, guardarSnapshot, rutaSnapshotPara } from "../src/sync.js";
+// Helpers del diseño B (registro de comprobantes), solo para los casos (e).
+import * as H from "./_helpers-clasificador.js";
 
 function conDirTemporal(fn) {
   const dir = mkdtempSync(join(tmpdir(), "incremental-checkpoint-multi-par-"));
@@ -395,5 +397,128 @@ test("el checkpoint de un par no se ve afectado por cuantos SKUs proceso el otro
       rutasUsadas.every((r) => r === rutaSnapshotPara(isla.stateKey, dir)),
       "los checkpoints de la isla solo tocan la ruta de la isla, nunca la del DOT"
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+// (e) REEMPLAZO AUTORIZADO (R-14, decision D-7 de la persona, 02/11/2026:
+// "Sí, retiralos (Recommended)"). Aca habia dos casos sobre
+// `ultimaCorridaExitosa`, el campo de la ventana temporal que el diseño B
+// retira. La PROPIEDAD que protegian sigue valiendo y se prueba ahora sobre lo
+// que la reemplaza, los CONSUMOS del registro: el checkpoint intermedio no
+// puede borrar estado ya persistido de corridas anteriores, ni adelantar el de
+// SKUs que el loop todavia no alcanzo. Si borrara un consumo viejo, ese credito
+// se volveria a acreditar (Shopify arriba: sobreventa); si adelantara uno de un
+// SKU no procesado, ese credito se perderia (doble descuento).
+//
+// Interfaz: aceptacion/clasificador-causa-comprobante/DISENO-INTERFAZ.md (4 y 5).
+// Se leen los archivos REALES del directorio temporal.
+// -----------------------------------------------------------------------------
+
+const CONSUMO_VIEJO = {
+  "111:SKU-VIEJO": { cantidad: 1, motivo: "delta", referencia: "2026-08-10T12:00:00.000Z", en: "2026-08-10T12:30:00.000Z" },
+};
+
+// 5 SKUs con delta -1 y una venta Shopify de 1 u. cada uno, ya registrada.
+function sembrarCincoConCredito(dir) {
+  const T = "2026-08-12T16:00:00.000Z";
+  const hace1h = "2026-08-12T15:00:00.000Z";
+  const skus = ["SKU-1", "SKU-2", "SKU-3", "SKU-4", "SKU-5"];
+  H.sembrarLibreta(dir, "dot", {
+    skus: Object.fromEntries(skus.map((s) => [s, 10])),
+    contabilium: Object.fromEntries(skus.map((s) => [s, 10])),
+    corte: "2026-08-01T00:00:00.000Z",
+    consumos: CONSUMO_VIEJO,
+  });
+  H.sembrarRegistro(dir, {
+    ultimoRefrescoOk: "2026-08-12T14:00:00.000Z",
+    comprobantes: skus.map((s, i) => H.entradaShopify({ id: 200 + i, sku: s, referencia: hace1h })),
+  });
+  return {
+    T,
+    stock: new Map([[H.DEPOSITO_DOT, new Map(skus.map((s) => [s, 9]))]]),
+    shopify: new Map([[H.LOCATION_DOT, new Map(skus.map((s) => [s, 9]))]]),
+    search: skus.map((_, i) => H.resumenSearch(200 + i)),
+  };
+}
+
+test("(R-14, reemplaza ultimaCorridaExitosa) un checkpoint intermedio conserva los consumos VIEJOS y no adelanta los de SKUs no procesados", async () => {
+  await H.conDirTemporal(async (dir) => {
+    const esc = sembrarCincoConCredito(dir);
+    let enPrimerCheckpoint = null;
+    let guardados = 0;
+    const deps = H.depsFake({
+      dir,
+      reloj: H.reloj(esc.T),
+      stock: esc.stock,
+      shopify: esc.shopify,
+      search: esc.search,
+      guardarSnapshotEnvoltorio: (real) => (...args) => {
+        guardados++;
+        const v = real(...args);
+        if (guardados === 1) enPrimerCheckpoint = H.leerLibretaCruda(dir, "dot");
+        return v;
+      },
+    });
+
+    await ejecutarPar(H.PAR_DOT, deps, { checkpointCada: 2 });
+
+    assert.ok(guardados > 1, "al menos un checkpoint intermedio ademas del final");
+    assert.ok(enPrimerCheckpoint, "el primer checkpoint ocurrio durante la corrida");
+    assert.deepEqual(
+      enPrimerCheckpoint.consumos?.["111:SKU-VIEJO"],
+      CONSUMO_VIEJO["111:SKU-VIEJO"],
+      "en el checkpoint intermedio el consumo de la corrida anterior sigue en disco, intacto"
+    );
+    assert.deepEqual(
+      Object.keys(enPrimerCheckpoint.consumos).sort(),
+      ["111:SKU-VIEJO", "200:SKU-1", "201:SKU-2"],
+      "solo los consumos de SKU-1 y SKU-2 (procesados antes del checkpoint), ninguno adelantado"
+    );
+
+    // El guardado final si tiene todos.
+    const final = H.leerLibretaCruda(dir, "dot");
+    assert.deepEqual(
+      Object.keys(final.consumos).sort(),
+      ["111:SKU-VIEJO", "200:SKU-1", "201:SKU-2", "202:SKU-3", "203:SKU-4", "204:SKU-5"]
+    );
+  });
+});
+
+test("(R-14, reemplaza ultimaCorridaExitosa) si el checkpoint intermedio es el ultimo que llega a disco antes de una interrupcion, los consumos viejos siguen intactos en disco", async () => {
+  await H.conDirTemporal(async (dir) => {
+    const esc = sembrarCincoConCredito(dir);
+    let guardados = 0;
+    const deps = H.depsFake({
+      dir,
+      reloj: H.reloj(esc.T),
+      stock: esc.stock,
+      shopify: esc.shopify,
+      search: esc.search,
+      // Mismo patron que el caso (c-bis): el SEGUNDO checkpoint explota ANTES de
+      // escribir; el fallo real de IO se propaga, no se traga.
+      guardarSnapshotEnvoltorio: (real) => (...args) => {
+        guardados++;
+        if (guardados === 2) throw new Error("ENOSPC simulado: fallo real de IO al escribir el segundo checkpoint");
+        return real(...args);
+      },
+    });
+
+    await assert.rejects(
+      () => ejecutarPar(H.PAR_DOT, deps, { checkpointCada: 2 }),
+      /ENOSPC simulado/,
+      "el fallo de IO del segundo checkpoint tiene que propagarse, no tragarse en silencio"
+    );
+
+    // Archivo REAL en disco despues de la interrupcion.
+    const libreta = H.leerLibretaCruda(dir, "dot");
+    assert.deepEqual(
+      libreta.consumos?.["111:SKU-VIEJO"],
+      CONSUMO_VIEJO["111:SKU-VIEJO"],
+      "el consumo de la corrida anterior sigue intacto: no lo borro el checkpoint parcial"
+    );
+    assert.deepEqual(Object.keys(libreta.consumos).sort(), ["111:SKU-VIEJO", "200:SKU-1", "201:SKU-2"]);
+    assert.equal(libreta.contabilium["SKU-3"], 10, "SKU-3 no llego a disco: ni baseline...");
+    assert.equal(libreta.consumos["202:SKU-3"], undefined, "...ni consumo");
   });
 });

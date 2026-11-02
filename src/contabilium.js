@@ -70,15 +70,50 @@ export function decidirReintento({ status, intento, retryAfter, esperaAcumuladaM
       reintentar: false,
       esperaMs: 0,
       motivo: `esperar ${Math.round(esperaMs / 1000)}s excede el presupuesto de la corrida`,
+      porPresupuesto: true,
     };
   }
 
   return { reintentar: true, esperaMs, motivo: esRed ? "fallo de red" : `HTTP ${status}` };
 }
 
-// Envuelve una llamada con la politica de reintentos de arriba.
-async function conReintentos(descripcion, fn, estado) {
+// Ritmo minimo entre pedidos de comprobantes (R-1): el cupo de 25 req/10 s es
+// de la cuenta y se comparte con iey-ai.
+export const RITMO_MINIMO_COMPROBANTES_MS = 1500;
+
+const MENSAJE_AGOTADO = "presupuesto de espera de la corrida agotado";
+
+// -----------------------------------------------------------------------------
+// Sesion por corrida (R-1): un token y un presupuesto de espera compartidos por
+// el stock, /search y los detalles. Todo lo que duerme usa `sesion.dormir`.
+// -----------------------------------------------------------------------------
+export function crearSesionContabilium({
+  baseUrl = process.env.CONTABILIUM_API_URL,
+  clientId = process.env.CONTABILIUM_CLIENT_ID,
+  clientSecret = process.env.CONTABILIUM_CLIENT_SECRET,
+  ritmoComprobantesMs = RITMO_MINIMO_COMPROBANTES_MS,
+  dormir = delay,
+} = {}) {
+  const ritmo = Number(ritmoComprobantesMs);
+  return {
+    baseUrl,
+    clientId,
+    clientSecret,
+    token: null,
+    tokenPendiente: null,
+    estado: { esperaAcumuladaMs: 0, ultimoError: null, agotado: false },
+    ritmoComprobantesMs: Number.isFinite(ritmo) ? Math.max(RITMO_MINIMO_COMPROBANTES_MS, ritmo) : RITMO_MINIMO_COMPROBANTES_MS,
+    dormir,
+  };
+}
+
+// Envuelve una llamada con la politica de reintentos de arriba. El presupuesto
+// es el de la sesion: si se agota, la sesion queda cortada y ninguna llamada
+// posterior vuelve a hacer un request.
+async function conReintentos(descripcion, fn, sesion) {
+  const estado = sesion.estado;
   for (let intento = 1; ; intento++) {
+    if (estado.agotado) throw new Error(`Contabilium ${descripcion}: ${MENSAJE_AGOTADO}`);
     let status = null;
     let retryAfter = null;
     try {
@@ -98,6 +133,7 @@ async function conReintentos(descripcion, fn, estado) {
       esperaAcumuladaMs: estado.esperaAcumuladaMs,
     });
     if (!d.reintentar) {
+      if (d.porPresupuesto) estado.agotado = true;
       if (status !== null) return { ok: false, status, text: async () => `(${d.motivo})` };
       throw new Error(`Contabilium ${descripcion}: ${d.motivo} — ${estado.ultimoError?.message ?? "sin detalle"}`);
     }
@@ -107,14 +143,42 @@ async function conReintentos(descripcion, fn, estado) {
       `  [reintento] ${descripcion}: ${d.motivo}, espero ${Math.round(d.esperaMs / 1000)}s ` +
         `(intento ${intento}/${MAX_INTENTOS})`
     );
-    await delay(d.esperaMs);
+    await sesion.dormir(d.esperaMs);
   }
+}
+
+// Token de la sesion: se pide una sola vez por corrida.
+async function tokenDe(sesion) {
+  if (sesion.token) return sesion.token;
+  if (!sesion.tokenPendiente) {
+    sesion.tokenPendiente = authenticate(sesion.baseUrl, sesion.clientId, sesion.clientSecret, sesion).then(
+      (t) => {
+        sesion.token = t;
+        return t;
+      },
+      (err) => {
+        sesion.tokenPendiente = null;
+        throw err;
+      }
+    );
+  }
+  return sesion.tokenPendiente;
+}
+
+function getConToken(url, token) {
+  return fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
 }
 
 // -----------------------------------------------------------------------------
 // authenticate — obtiene un access token de Contabilium
 // -----------------------------------------------------------------------------
-async function authenticate(baseUrl, clientId, clientSecret, estado) {
+async function authenticate(baseUrl, clientId, clientSecret, sesion) {
   const res = await conReintentos("auth", () =>
     fetch(`${baseUrl}/token`, {
       method: "POST",
@@ -124,7 +188,7 @@ async function authenticate(baseUrl, clientId, clientSecret, estado) {
         client_id: clientId,
         client_secret: clientSecret,
       }),
-    }), estado);
+    }), sesion);
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -141,20 +205,13 @@ async function authenticate(baseUrl, clientId, clientSecret, estado) {
 // -----------------------------------------------------------------------------
 // fetchStockPage — trae UNA pagina de stock del deposito
 // -----------------------------------------------------------------------------
-async function fetchStockPage(baseUrl, token, depositoId, page, estado) {
-  const url = new URL(`${baseUrl}/api/inventarios/getStockByDeposito`);
+async function fetchStockPage(sesion, token, depositoId, page) {
+  const url = new URL(`${sesion.baseUrl}/api/inventarios/getStockByDeposito`);
   url.searchParams.set("id", depositoId);
   url.searchParams.set("page", String(page));
   url.searchParams.set("pageSize", String(PAGE_SIZE));
 
-  const res = await conReintentos(`pagina ${page}`, () =>
-    fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    }), estado);
+  const res = await conReintentos(`pagina ${page}`, () => getConToken(url.toString(), token), sesion);
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -193,26 +250,23 @@ export function cantidadDeItem(item) {
 //
 // Si algo falla (auth, HTTP, datos invalidos) lanza un Error. El llamador
 // (sync.js) NO debe actualizar Shopify si esto falla (requisito 15).
+//
+// `sesion`: la de la corrida (token y presupuesto compartidos). Sin sesion se
+// crea una propia (syncUnSku, syncTodos, diagnostico-locations).
 // -----------------------------------------------------------------------------
-export async function getStockDeposito(depositoIdExplicito = null) {
-  const baseUrl = process.env.CONTABILIUM_API_URL;
-  const clientId = process.env.CONTABILIUM_CLIENT_ID;
-  const clientSecret = process.env.CONTABILIUM_CLIENT_SECRET;
+export async function getStockDeposito(depositoIdExplicito = null, sesion = null) {
+  const s = sesion ?? crearSesionContabilium();
   const depositoId = depositoIdExplicito ?? process.env.CONTABILIUM_DOT_DEPOSITO_ID;
 
-  if (!baseUrl || !clientId || !clientSecret || !depositoId) {
+  if (!s.baseUrl || !s.clientId || !s.clientSecret || !depositoId) {
     throw new Error(
       "Faltan variables de Contabilium en .env: " +
         "CONTABILIUM_API_URL, CONTABILIUM_CLIENT_ID, CONTABILIUM_CLIENT_SECRET, CONTABILIUM_DOT_DEPOSITO_ID"
     );
   }
 
-  // El presupuesto de espera es de la CORRIDA, no de cada request: si nos comimos
-  // 4 minutos en la pagina 3, la pagina 40 ya no puede dormir un minuto mas.
-  const estado = { esperaAcumuladaMs: 0, ultimoError: null };
-
   console.log(`[Contabilium] Autenticando...`);
-  const token = await authenticate(baseUrl, clientId, clientSecret, estado);
+  const token = await tokenDe(s);
   console.log(`[Contabilium] Token obtenido. Leyendo deposito ${depositoId}...`);
 
   const stockPorSku = new Map();
@@ -221,8 +275,8 @@ export async function getStockDeposito(depositoIdExplicito = null) {
   let totalPaginas = 1;
 
   while (page <= totalPaginas) {
-    await delay(DELAY_ENTRE_REQUESTS_MS); // respetar rate limit
-    const respuesta = await fetchStockPage(baseUrl, token, depositoId, page, estado);
+    await s.dormir(DELAY_ENTRE_REQUESTS_MS); // respetar rate limit
+    const respuesta = await fetchStockPage(s, token, depositoId, page);
 
     // Validacion defensiva de la forma de la respuesta (requisito 15)
     const totalItems = Number(respuesta?.TotalItems);
@@ -263,4 +317,129 @@ export async function getStockDeposito(depositoIdExplicito = null) {
   }
   console.log(`[Contabilium] OK. ${stockPorSku.size} SKUs leidos del deposito DOT.`);
   return stockPorSku;
+}
+
+// -----------------------------------------------------------------------------
+// buscarComprobantes / fetchComprobantesDetalle — clasificador de causa (R-1)
+// -----------------------------------------------------------------------------
+// De solo lectura. /api/comprobantes/search NO tiene filtro de deposito
+// server-side, trae `Items` null e `Inventario` 0: devuelve los comprobantes de
+// TODA la cuenta en el rango de dias. El detalle real (lineas, deposito) sale de
+// GET /api/comprobantes/?id=, de a uno y con ritmo.
+//
+// Fechas: solo "YYYY-MM-DD" (granularidad de dia, el unico formato probado en
+// produccion por iey-ai). Cualquier otro formato se rechaza sin pedir nada.
+const FORMATO_DIA = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function buscarComprobantes({ fechaDesde, fechaHasta } = {}, sesion = null) {
+  if (!FORMATO_DIA.test(String(fechaDesde ?? "")) || !FORMATO_DIA.test(String(fechaHasta ?? ""))) {
+    throw new Error(`Contabilium comprobantes/search: fechas invalidas (se espera YYYY-MM-DD): ${fechaDesde} / ${fechaHasta}`);
+  }
+  const s = sesion ?? crearSesionContabilium();
+  const token = await tokenDe(s);
+
+  const resumenes = [];
+  let page = 1;
+  let totalPaginas = 1;
+
+  while (page <= totalPaginas) {
+    await s.dormir(s.ritmoComprobantesMs);
+    const url = new URL(`${s.baseUrl}/api/comprobantes/search`);
+    url.searchParams.set("fechaDesde", fechaDesde);
+    url.searchParams.set("fechaHasta", fechaHasta);
+    url.searchParams.set("page", String(page));
+
+    const res = await conReintentos(`comprobantes/search pagina ${page}`, () => getConToken(url.toString(), token), s);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Contabilium comprobantes/search fallo (HTTP ${res.status}): ${body.slice(0, 200)}`);
+    }
+    const respuesta = await res.json();
+
+    const totalItems = Number(respuesta?.TotalItems);
+    const items = respuesta?.Items;
+    if (!Number.isFinite(totalItems) || !Array.isArray(items)) {
+      throw new Error(`Contabilium comprobantes/search devolvio datos invalidos en pagina ${page}`);
+    }
+
+    totalPaginas = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+    resumenes.push(...items);
+    page++;
+  }
+
+  return resumenes;
+}
+
+// Un 200 es un comprobante interpretable solo si es un objeto JSON con Id
+// numerico e Items arreglo (caso real 173386407).
+function interpretarDetalle(texto) {
+  let cuerpo;
+  try {
+    cuerpo = JSON.parse(texto);
+  } catch {
+    return null;
+  }
+  if (!cuerpo || typeof cuerpo !== "object" || Array.isArray(cuerpo)) return null;
+  if (!Number.isFinite(Number(cuerpo.Id)) || cuerpo.Id === null || cuerpo.Id === "") return null;
+  if (!Array.isArray(cuerpo.Items)) return null;
+  return cuerpo;
+}
+
+// Pide el detalle de UN comprobante. Nunca lanza: devuelve el resultado del id.
+// `definitivo` solo ante 400, 404 o un 200 que no es un comprobante.
+async function pedirDetalle(s, token, id) {
+  const url = new URL(`${s.baseUrl}/api/comprobantes/`);
+  url.searchParams.set("id", String(id));
+  let res;
+  try {
+    res = await conReintentos(`comprobantes/?id=${id}`, () => getConToken(url.toString(), token), s);
+  } catch (err) {
+    return { id, ok: false, error: err.message, definitivo: false };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    return {
+      id,
+      ok: false,
+      error: `Contabilium comprobantes/?id=${id} fallo (HTTP ${res.status}): ${String(body).slice(0, 200)}`,
+      definitivo: res.status === 400 || res.status === 404,
+    };
+  }
+  const texto = await res.text().catch(() => "");
+  const detalle = interpretarDetalle(texto);
+  if (!detalle) {
+    return { id, ok: false, error: `Contabilium comprobantes/?id=${id}: la respuesta no es un comprobante interpretable`, definitivo: true };
+  }
+  return { id, ok: true, detalle };
+}
+
+// fetchComprobantesDetalle — detalle de varios comprobantes, SECUENCIAL y con
+// ritmo (>= 1500 ms): el cupo de Contabilium es compartido con iey-ai y un 429
+// bloquea a los dos por ~1 min. Un id que falla no corta el lote; con el
+// presupuesto de la corrida agotado, los restantes vuelven sin request.
+export async function fetchComprobantesDetalle(ids, sesion = null) {
+  const s = sesion ?? crearSesionContabilium();
+  const resultados = [];
+  let token = null;
+  let errorDeToken = null;
+  for (const id of ids) {
+    if (s.estado.agotado) {
+      resultados.push({ id, ok: false, error: MENSAJE_AGOTADO, definitivo: false });
+      continue;
+    }
+    if (!token && !errorDeToken) {
+      try {
+        token = await tokenDe(s);
+      } catch (err) {
+        errorDeToken = err.message; // sin token no se pide ningun id (no se reintenta por id)
+      }
+    }
+    if (errorDeToken) {
+      resultados.push({ id, ok: false, error: errorDeToken, definitivo: false });
+      continue;
+    }
+    await s.dormir(s.ritmoComprobantesMs);
+    resultados.push(await pedirDetalle(s, token, id));
+  }
+  return resultados;
 }

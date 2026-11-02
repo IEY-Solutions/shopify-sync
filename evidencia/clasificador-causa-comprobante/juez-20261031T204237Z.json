@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "feature": "clasificador-causa-comprobante",
+  "fecha": "2026-10-31T20:42:37+00:00",
+  "arn": "0.1.0",
+  "host": "claude",
+  "modelo": "opus",
+  "esfuerzo": "high",
+  "arbol": {
+    "head_tree": "1f7309fa5b2fdce05131ab99c6fc06fef0f95fa9",
+    "diff_sha256": "32d481cacb13fc04a9490514b718330e6177c8271b56fc44919560d6967daf88"
+  },
+  "oraculo_sha256": "d44ccfc0b5f6fe056e907ea9a543c1591ead847e6084b612c275709c48aa28ca",
+  "contrato_sha256": "bee23b1aae65db841182c2d77287aa23a8f5ee721646bac4838d0e0d85a74a0a",
+  "evidencia_id": "clasificador-causa-comprobante/20261031T204107Z",
+  "veredicto": "APRUEBA",
+  "criterios": [
+    {
+      "id": "CA-1",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T204107Z",
+      "motivo": "El comando sale con exit 0 y pasan los 14 tests. buscarComprobantes manda fechaDesde, fechaHasta y page, y un assert exige que la query no lleve id. fetchComprobantesDetalle tiene tests para tres cosas: autentica una sola vez por lote, nunca hay más de un pedido en curso con el orden preservado (secuencial, sin Promise.all) y espera entre pedidos. Que espera lo confirman los ~1500 ms que tarda con 3 ids, unos 500 ms por pedido. Los reintentos ante 429, 503 y 500 se prueban con MAX_INTENTOS. En src/contabilium.js el código coincide: un for con await delay(DELAY_ENTRE_REQUESTS_MS) que llama a fetchComprobanteById(id, token) y reusa el mismo token y conReintentos."
+    },
+    {
+      "id": "CA-3",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T204107Z",
+      "motivo": "El comando sale con exit 0 y pasan los 4 tests. El helper ahora cuenta cada llamada a fetchComprobantesDetalle y guarda todos los argumentos de buscarComprobantes. Los tests exigen tres cosas: buscarComprobantes se llama una vez y con un único argumento {desde, hasta}, sin depósito; fetchComprobantesDetalle se llama una vez y con la lista completa de ids (3 de 3, y 5 de 5 con solo 2 candidatos); y 14 SKUs extra sin delta negativo no suman llamadas. Con esto se cierran los dos huecos que había marcado el juicio juez-20261031T203504Z. sync.js hace una sola búsqueda, lazy y cacheada: buscarComprobantes(ventana) y después fetchComprobantesDetalle(ids)."
+    },
+    {
+      "id": "CA-5",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T204107Z",
+      "motivo": "El comando sale con exit 0 y pasan los 4 tests, con el fake de fetchComprobantesDetalle. En el caso del censo el stock baja de 10 a 8 con un comprobante Shopify/25020/DOT de Cantidad 2: no se llama a setearStock, causa_venta_shopify es al menos 1 y el baseline avanza a 8. En el caso nuevo de coincidencia parcial el delta es -3 y el comprobante es de 1: se cuenta causa_desconocida=1, causa_venta_shopify=0 y se escribe 7, o sea el delta completo. Hay controles negativos con una venta de mostrador y con otro depósito. sync.js le pasa deltaMagnitud=calc.delta a determinarCausaSku, que suma Cantidad y la compara con Math.abs del delta."
+    },
+    {
+      "id": "CA-6",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T204107Z",
+      "motivo": "El comando sale con exit 0 y pasan los 9 tests. Leí .github/workflows/sync.yml: los steps 'Validar compuerta manual' (líneas 80-91) y 'Correr sync' (96-105) reciben ESCRITURA_ABSOLUTA y MOTIVO por env:. Ningún bloque run: interpola ${{ inputs.escritura_absoluta }} ni ${{ inputs.motivo }}, y el comando real los usa entre comillas (\"$ESCRITURA_ABSOLUTA\", \"$MOTIVO\")."
+    },
+    {
+      "id": "CA-9",
+      "cumple": true,
+      "evidencia_id": "clasificador-causa-comprobante/20261031T204107Z",
+      "motivo": "El comando sale con exit 0 y pasan los 8 tests. El test I-2 demora resolverSku 60 ms por SKU y confirma que ultimaCorridaExitosa queda a menos de 60 ms de la lectura del stock y a 60 ms o más del fin de la corrida. En src/sync.js:516-523, timestampLecturaStock se toma justo después de getStockDeposito y es lo que se guarda en el guardado final. Con corrida previa, la ventana de ejecutarPar arranca en ultimaCorridaExitosa; sin ella, o con una libreta vieja, se usa el default de 2 horas."
+    }
+  ],
+  "hallazgos": [
+    "No hace fallar ningún CA, pero es un riesgo para producción contra R-1/B-1. El comentario de src/contabilium.js dice que fechaDesde y fechaHasta van como 'YYYY-MM-DD', con granularidad de día. Sin embargo, sync.js le pasa a buscarComprobantes la ventana de calcularVentanaComprobantes, que viene en ISO completo, sin convertirla. El test CA-1 usa fechas 'YYYY-MM-DD' escritas a mano, así que no lo detecta. Si la API rechaza ese formato, cada búsqueda cae en {fallo: true} y el clasificador nunca protege: todo delta negativo termina en causa_desconocida.",
+    "Tampoco hace fallar ningún CA, pero es otro riesgo. /search devuelve comprobantes de toda la cuenta, y determinarCausaSku junta los candidatos por SKU antes de filtrar por depósito. Si en la misma ventana el SKU aparece también en un comprobante de otro depósito, por ejemplo CENTRAL, hay 2 candidatos: el resultado es causa_desconocida y se aplica el delta, o sea vuelve a pasar el doble descuento que R-5 quiere evitar. Ningún test cubre ese caso.",
+    "Este veredicto sale de una sesión de solo lectura y no reemplaza al de `arn juzgar`, que es el que valida arn para el cierre."
+  ]
+}
