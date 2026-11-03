@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "feature": "sku-universal-multivarianta",
+  "requisitos": {
+    "arquitectura": {
+      "rutas": [
+        "src"
+      ],
+      "minimo": 1,
+      "propuestas": {
+        "propuesta": {
+          "revision": 1,
+          "contenido_sha256": "749c34c3b7bc6587b079fd526ace27bff2a4c9b4b2dfb9fbaf1034500f3c4cd7",
+          "archivo": "docs/diseno/arquitectura-sku-universal-multivarianta.html",
+          "sha256": "afc75d36b595d98e88271182e6fcbd3620c7ee400bca1ae05745978e41b341dc",
+          "medio": "artifact",
+          "url": "file:///home/federico/IEY-SOLUTIONS/shopify-sync/docs/diseno/arquitectura-sku-universal-multivarianta.html"
+        }
+      },
+      "aprobacion": {
+        "variante": "propuesta",
+        "cita": "03/11/2026, tras presentar docs/diseno/arquitectura-sku-universal-multivarianta.html y pedir aprobacion, la persona interrumpio la pregunta y respondio 'continua'; antes habia dicho 'Segui hasta terminar'. Todas las decisiones de producto del documento son suyas: Duda 1 'Tomar el valor mas alto como referencia y emparejar solo', Duda 4 'Terminar lo pendiente primero, el cambio nuevo espera a la corrida siguiente', Duda 5 'Sumar las ventas individuales, no tomar el maximo', aparte 'Si, revisar los 7 SKUs en cada corrida', Duda 7 'Ignorar la suba, contar solo las bajas reales'.",
+        "sha256": "afc75d36b595d98e88271182e6fcbd3620c7ee400bca1ae05745978e41b341dc",
+        "fecha": "2026-11-03T15:01:54.969903+00:00"
+      }
+    }
+  },
+  "historial": [
+    {
+      "feature": "clasificador-causa-comprobante",
+      "tipo": "arquitectura",
+      "accion": "presentada",
+      "fecha": "2026-11-02T12:38:56.503842+00:00",
+      "variante": "propuesta",
+      "revision": 1,
+      "contenido_sha256": "c5aa3cc3a3bea72e461c29383761e50a31aaa710842f139d9921adee0cecc3ba",
+      "archivo": "docs/diseno/arquitectura.html",
+      "sha256": "2f6e6dff9e42a578ee669e301c8d1d851492a5918ce877bb188e634193053576",
+      "medio": "artifact",
+      "url": "file:///home/federico/IEY-SOLUTIONS/shopify-sync/docs/diseno/arquitectura.html"
+    },
+    {
+      "feature": "clasificador-causa-comprobante",
+      "tipo": "arquitectura",
+      "accion": "aprobada",
+      "fecha": "2026-11-02T12:44:42.900933+00:00",
+      "variante": "propuesta",
+      "cita": "02/11/2026, respuestas de la persona: 'B: registro de comprobantes (Recommended)'; '¿Aceptás el resto de las decisiones de la alternativa B como las recomienda el análisis?' -> 'Sí, todas las recomendadas (Recommended)'; falla del clasificador -> 'Rojo enseguida (Recommended)'; retirar ultimaCorridaExitosa y test/libreta-ultima-corrida-exitosa.test.js -> 'Sí, retiralos (Recommended)'",
+      "sha256": "2f6e6dff9e42a578ee669e301c8d1d851492a5918ce877bb188e634193053576",
+      "revision": 1
+    },
+    {
+      "feature": "sku-universal-multivarianta",
+      "tipo": "arquitectura",
+      "accion": "presentada",
+      "fecha": "2026-11-03T14:50:23.466455+00:00",
+      "variante": "propuesta",
+      "revision": 1,
+      "contenido_sha256": "749c34c3b7bc6587b079fd526ace27bff2a4c9b4b2dfb9fbaf1034500f3c4cd7",
+      "archivo": "docs/diseno/arquitectura-sku-universal-multivarianta.html",
+      "sha256": "afc75d36b595d98e88271182e6fcbd3620c7ee400bca1ae05745978e41b341dc",
+      "medio": "artifact",
+      "url": "file:///home/federico/IEY-SOLUTIONS/shopify-sync/docs/diseno/arquitectura-sku-universal-multivarianta.html"
+    },
+    {
+      "feature": "sku-universal-multivarianta",
+      "tipo": "arquitectura",
+      "accion": "aprobada",
+      "fecha": "2026-11-03T15:01:54.969903+00:00",
+      "variante": "propuesta",
+      "cita": "03/11/2026, tras presentar docs/diseno/arquitectura-sku-universal-multivarianta.html y pedir aprobacion, la persona interrumpio la pregunta y respondio 'continua'; antes habia dicho 'Segui hasta terminar'. Todas las decisiones de producto del documento son suyas: Duda 1 'Tomar el valor mas alto como referencia y emparejar solo', Duda 4 'Terminar lo pendiente primero, el cambio nuevo espera a la corrida siguiente', Duda 5 'Sumar las ventas individuales, no tomar el maximo', aparte 'Si, revisar los 7 SKUs en cada corrida', Duda 7 'Ignorar la suba, contar solo las bajas reales'.",
+      "sha256": "afc75d36b595d98e88271182e6fcbd3620c7ee400bca1ae05745978e41b341dc",
+      "revision": 1
+    }
+  ]
+}

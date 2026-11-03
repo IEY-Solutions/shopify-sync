@@ -7,8 +7,9 @@
 // SKU, cuenta `duplicados` en el [RESUMEN] del par, imprime una linea [AVISO]
 // con el SKU y la cantidad de variantes, y NO pone la corrida en rojo.
 //
-// Caso real: APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E esta en 5 variantes; el sync
-// escribio solo en la 17e (24/10 +10, despues -1, -1 y -1, la ultima el 31/10
+// Caso real: IEY-COMBO-CARBON-VERDE-IP16E esta en 5 variantes (migrado de
+// APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E, T02, R-15); el sync escribio solo en
+// la variante establecida (24/10 +10, despues -1, -1 y -1, la ultima el 31/10
 // 18:01 UTC) sin detectar la ambiguedad. Interfaz: DISENO-INTERFAZ.md 4 y 5.
 //
 // Corre con: node --test test/cache-sku-duplicados.test.js

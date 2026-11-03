@@ -22,12 +22,12 @@ import * as shopify from "../src/shopify.js";
 import { depsFake, guardiaDeEscriturasEnRepo, LOCATION_DOT } from "./_helpers-clasificador.js";
 
 // ------------------------------------------------------------ casos reales
-// docs/analisis/2026-11-02-skus-repetidos-y-cruzados.md, accion 22: el SKU
-// universal hoy esta en 5 variantes (iPhone 13, 13 Pro, 14, 16e y 17e). El
-// historial de ajustes de Shopify muestra que el sync escribio SOLO en la 17e
-// (24/10 +10, despues -1, -1 y -1; la ultima el 31/10 18:01 UTC), porque la
-// tenia en la cache.
-export const SKU_APPLYFIT = "APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E";
+// docs/analisis/2026-11-02-skus-repetidos-y-cruzados.md, grupo A4 (fila 224):
+// el SKU hoy esta en 5 variantes. El historial de ajustes de Shopify muestra
+// que el sync escribio SOLO en la variante establecida, porque la tenia en
+// la cache. Migrado de APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E (T02, R-15): ese
+// SKU paso a ser un curado universal (T01) y dejo de servir para este caso.
+export const SKU_APPLYFIT = "IEY-COMBO-CARBON-VERDE-IP16E";
 // Correccion pendiente 9 del mismo analisis (fila 184): la variante
 // "Negro / iPhone 18 Pro" del combo carbon tiene el SKU de otra.
 export const SKU_NEGRO_18PRO = "IEY-COMBO-IEY108N-CARBON-NEGRO-IP18PRO";

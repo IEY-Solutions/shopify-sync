@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>SKU universal multi-variante: arquitectura</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1.2rem; color: #1d1d1f; line-height: 1.5; }
+  h1 { font-size: 1.6rem; margin-bottom: .2rem; }
+  h2 { margin-top: 2.4rem; border-bottom: 2px solid #e5e5ea; padding-bottom: .3rem; }
+  h3 { margin-top: 1.6rem; }
+  .meta { color: #6e6e73; font-size: .9rem; }
+  .rec { background: #e8f5e9; border-left: 4px solid #2e7d32; padding: .8rem 1rem; margin: 1rem 0; }
+  .warn { background: #fff8e1; border-left: 4px solid #f9a825; padding: .8rem 1rem; margin: 1rem 0; }
+  .cita { font-style: italic; }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92rem; }
+  th, td { border: 1px solid #d2d2d7; padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #f5f5f7; }
+  td.si { background: #e8f5e9; }
+  td.no { background: #fdecea; }
+  td.parcial { background: #fff8e1; }
+  code { background: #f5f5f7; padding: 0 .25rem; border-radius: 3px; font-size: .9em; }
+  pre.formula { background: #f5f5f7; padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; }
+  .mermaid { background: #fafafa; border: 1px solid #e5e5ea; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>SKU universal multi-variante: escribir el mismo stock en todas las variantes</h1>
+<p class="meta">shopify-sync · feature <code>sku-universal-multivarianta</code> · 03/11/2026 · Nivel 2, riesgo alto · Diseño para aprobar, todavía sin implementar. El contrato completo (R-1 a R-19, CA-1 a CA-14, con las citas <code>ruta:línea</code>) está en <code>.agents/.arn/feature.md</code>. La lista curada sale de <code>docs/analisis/2026-11-02-skus-repetidos-y-cruzados.md</code>, sección 3.A1.</p>
+
+<h2>0. Resumen ejecutivo</h2>
+<div class="rec">
+<p><strong>Qué se aprueba.</strong> Para los <strong>7 SKUs ApplyFit</strong> de la lista curada (18 variantes; coincidencia exacta del string, nunca por parecido), el sync calcula <strong>un solo</strong> valor por SKU y corrida, con <strong>un solo baseline</strong>, y lo escribe en <strong>todas</strong> las variantes. El resto del catálogo no cambia.</p>
+<ul>
+  <li><strong>De dónde sale la referencia</strong> (R-4). Hay tres caminos excluyentes. <em>Siembra</em> si el baseline es null. <em>Bootstrap con el máximo</em> si todavía no hay <code>escrito</code> guardado (es tu Duda 1). <em>Camino normal</em> en el resto de los casos: <code>max(0, escrito − Σ max(0, escrito − available_i))</code>, que suma las ventas de cada variante e ignora las subas (Dudas 5 y 7).</li>
+  <li><strong>Journal "pendiente"</strong> (R-10 a R-12). Se persiste antes de la primera escritura. Si algo falla, la corrida siguiente reintenta el <em>mismo</em> valor, sin recalcular. Un cambio de Contabilium en el medio espera a la corrida siguiente (Duda 4). Así se cierra el bug B-1, que aplicaba el delta dos veces.</li>
+  <li><strong>Cuando no hay automatismo seguro, el caso pasa a mano</strong> (R-16, R-17). Un pendiente que se calculó con crédito o con siembra no se reintenta solo. Tampoco uno cuya variante se movió entre corridas. Esos casos se cierran con la compuerta absoluta manual, que también escribe en las N variantes y consume el crédito una sola vez.</li>
+  <li><strong>Los 7 SKUs se revisan en cada corrida</strong> (R-14), aunque Contabilium no cambie (tu aparte de la Duda 5). Cuesta como máximo 7 búsquedas a Shopify por corrida y ninguna lectura extra a Contabilium.</li>
+</ul>
+<p>Todas las decisiones de producto ya las tomaste vos durante la conversación (sección 3, con tu cita literal). Este documento no agrega ninguna. Solo queda abierta la Duda 10 (<code>causa_desconocida</code>), diferida fuera de alcance.</p>
+</div>
+
+<h2>1. Entendimiento del problema</h2>
+<p>Algunos artículos físicos están publicados en Shopify como <strong>variantes separadas por modelo de teléfono</strong>, y todas esas variantes llevan <strong>el mismo SKU exacto</strong>. Un ejemplo: el protector <code>APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E</code> es un solo producto en el depósito, con un solo stock en Contabilium, pero en la tienda aparece cinco veces, una por modelo (IP13, IP13 Pro, IP14, 16e, 17e).</p>
+<p>Hoy el sync, siguiendo el contrato de <code>verificar-cache-sku</code>, trata ese SKU como un <strong>duplicado</strong>. Escribe solo en la "variante establecida" de la caché y emite un <code>[AVISO]</code>. Si no hay variante establecida, tira <code>SkuAmbiguoError</code> y no escribe en ninguna.</p>
+
+<div class="grid">
+<div>
+<h3>Qué pasa hoy</h3>
+<pre class="mermaid">
+flowchart TD
+  C["Contabilium: 7 unidades del protector"] --> S["sync: busqueda exacta sku entre comillas"]
+  S --> R{"variante establecida en cache?"}
+  R -- si --> W["escribe 7 SOLO en esa variante y emite AVISO"]
+  R -- no --> X["SkuAmbiguoError: no escribe en ninguna"]
+  W --> V1["IP13: 7"]
+  W -.-> V2["IP13 Pro: 0"]
+  W -.-> V3["IP14: 0"]
+  W -.-> V4["16e: 0"]
+  W -.-> V5["17e: 0"]
+</pre>
+</div>
+<div>
+<h3>Por qué es un problema real</h3>
+<p>Es el caso real del informe: <strong>5 variantes, 4 en 0</strong> (7/0/0/0/0). Quien entra a la tienda desde un 13 Pro, un 14, un 16e o un 17e ve el protector <strong>agotado</strong>, aunque haya 7 en el local. Eso es venta perdida todos los días y no aparece en ningún error.</p>
+<p>Los 7 SKUs afectados suman 18 variantes. El pedido decía 19, pero se usó el informe porque así lo pediste (Duda 2).</p>
+<table>
+  <tr><th>SKU</th><th>Variantes</th></tr>
+  <tr><td><code>APPLYFIT-CLEAR-IP16PRO-17-17PRO</code></td><td>3</td></tr>
+  <tr><td><code>APPLYFIT-CLEAR-S24-S25</code></td><td>2</td></tr>
+  <tr><td><code>APPLYFIT-CLEAR-IP15-16</code></td><td>2</td></tr>
+  <tr><td><code>APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E</code></td><td>5</td></tr>
+  <tr><td><code>APPLYFIT-CLEAR-IP16PM-17PM</code></td><td>2</td></tr>
+  <tr><td><code>APPLYFIT-CLEAR-IP13PM-14PLUS</code></td><td>2</td></tr>
+  <tr><td><code>APPLYFIT-CLEAR-S24PLUS-S25PLUS</code></td><td>2</td></tr>
+</table>
+</div>
+</div>
+
+<div class="warn"><strong>Lo que lo vuelve delicado.</strong> Escribir N veces es fácil. Lo difícil es que hay <strong>un</strong> stock físico y <strong>N</strong> lecturas de Shopify, y Shopify descuenta cada venta online <strong>solo de la variante vendida</strong>. Hay que decidir de cuál de esas N lecturas sale el "Shopify actual" contra el que se aplica el delta, sin re-inflar ventas (invariante 1) y sin aplicar dos veces un delta cuando una escritura queda a medias (invariante 7).</div>
+
+<h3>Qué no cambia</h3>
+<ul>
+  <li>Un baseline por SKU, nunca por variante. <code>calcularEscritura</code> corre una vez por SKU y corrida, y el crédito se suma una sola vez (R-3).</li>
+  <li>Cualquier duplicado que no esté en la lista sigue igual que hoy: variante establecida con <code>[AVISO]</code>, o <code>SkuAmbiguoError</code>. Entra acá el caso ambiguo 16e/17e del grupo A4 y también cualquier SKU que sea prefijo o extensión de uno curado (R-1, R-6).</li>
+  <li>Coincidencia exacta, deltas, enteros y la guarda <code>changeFromQuantity</code> en cada mutación (R-5, R-9).</li>
+  <li>Los tests de <code>verificar-cache-sku</code> que hoy usan como fixture un SKU curado se migran a <code>IEY-COMBO-CARBON-VERDE-IP16E</code>. Solo cambia el string. CA-10 compara byte a byte contra copias congeladas de los originales, así que las aserciones no pueden cambiar (R-15).</li>
+</ul>
+
+<h2>2. Huecos encontrados en el camino y cómo se cerraron</h2>
+<p>El diseño no salió de una vez. Cada hito de abajo es un hueco que apareció en una revisión y su cierre, en orden.</p>
+
+<h3>Hito 1: el delta se aplicaba dos veces tras un fallo parcial (B-1)</h3>
+<p>La primera versión calculaba el valor y lo escribía en las N variantes. El problema es que cada mutación a Shopify es independiente: si falla la tercera de cinco, el SKU no queda resuelto y el baseline no avanza. En la corrida siguiente se vuelve a calcular un delta sobre variantes que <strong>ya recibieron</strong> el delta anterior.</p>
+<pre class="mermaid">
+sequenceDiagram
+  participant Sync
+  participant Libreta
+  participant Shopify
+  Note over Sync,Shopify: Corrida 1. Baseline 10, Contabilium 13, delta +3, variantes en 5, nuevoValor 8
+  Sync->>Shopify: escribir 8 en v1, v2, v4, v5
+  Shopify-->>Sync: ok
+  Sync->>Shopify: escribir 8 en v3
+  Shopify-->>Sync: ERROR
+  Sync->>Libreta: SKU no resuelto, baseline sigue en 10
+  Note over Sync,Shopify: Corrida 2 SIN journal. Lee 8/8/5/8/8, sigue con delta +3
+  Sync->>Shopify: referencia 8 + 3 = 11 en todas
+  Note over Shopify: +3 aplicado dos veces. Sobreventa de 3 unidades
+  Note over Sync,Shopify: Corrida 2 CON journal pendiente (R-10, R-11)
+  Libreta-->>Sync: pendiente: nuevoValor 8, desde 5 por variante
+  Sync->>Shopify: escribir 8 SOLO en v3 con changeFromQuantity 5
+  Sync->>Libreta: borrar pendiente, baseline 13 una sola vez
+</pre>
+<p><strong>Cierre:</strong> el journal pendiente (Hito 3) y el ejemplo normativo de R-11, que prueba CA-7.</p>
+
+<h3>Hito 2: "tomar el máximo" re-infla las ventas online en régimen estable</h3>
+<p>Tu Duda 1 resolvió bien la <em>herencia</em>: las variantes en 0 que el sync viejo nunca tocó. Después apareció el otro origen de divergencia, que son las ventas. Las ventas web van a OFICINA (ADR 0001), así que Contabilium no se mueve con una venta online. Una venta en la variante IP14 deja 4/5/5/5/5.</p>
+<table>
+  <tr><th>Paso</th><th>Shopify</th><th>Contabilium</th><th>Con el máximo</th><th>Con <code>escrito</code> y suma de bajas</th></tr>
+  <tr><td>Estable</td><td>5/5/5/5/5</td><td>10</td><td>5</td><td>5 (escrito = 5)</td></tr>
+  <tr><td>Venta online en IP14</td><td>4/5/5/5/5</td><td>10</td><td class="no">El SKU queda salteado: 4 variantes ofrecen 5 de un artículo del que quedan 4</td><td class="si">Se revisa en cada corrida (R-14): referencia 5 − 1 = 4, escribe 4 en las 5</td></tr>
+  <tr><td>Venta de mostrador −1</td><td>4/5/5/5/5</td><td>9</td><td class="no">max 5 − 1 = <strong>4</strong>: la venta online se re-infla</td><td class="si">5 − 1 − 1 = <strong>3</strong>: correcto</td></tr>
+</table>
+<p><strong>Cierre:</strong> se guarda <code>escrito</code>, el último valor confirmado en las N variantes (R-13). El máximo queda solo para el bootstrap. A esto se suma el bypass del atajo para los 7 SKUs (R-14). Lo prueban CA-2, CA-3 y CA-9.</p>
+
+<h3>Hito 3: el journal "pendiente" como solución</h3>
+<p>Antes de la primera mutación se persiste en la libreta del par, en disco, una entrada con <code>nuevoValor</code>, <code>contabiliumObjetivo</code> y, por cada variante, <code>variantId</code>, <code>inventoryItemId</code> y el <code>desde</code> leído. Como se guarda <em>antes</em> de escribir, cubre igual un error de Shopify y un proceso que muere a mitad. Si la persistencia misma falla, no se escribe nada. Ningún checkpoint ni guardado final borra la entrada. Solo la borra la confirmación de las N variantes, o la compuerta (R-10).</p>
+<p>Mientras hay un pendiente no se calcula nada: ni delta, ni máximo, ni <code>escrito</code>, ni el Contabilium de la corrida. Por cada variante se mira el valor actual (R-11):</p>
+<ul>
+  <li>ya está en <code>nuevoValor</code>: satisfecha;</li>
+  <li>sigue en <code>desde</code>: se escribe;</li>
+  <li>tiene cualquier otro valor: <code>[ERROR]</code> y no se escribe. La variante se movió y no se puede saber si la escritura anterior entró. Por la invariante 4, una divergencia se reporta, no se pisa.</li>
+</ul>
+<p>Al cerrar el pendiente, el baseline queda en <code>contabiliumObjetivo</code> y <code>escrito</code> en <code>nuevoValor</code> (R-12).</p>
+
+<h3>Hito 4: el crédito y la siembra no viajan en el pendiente (BL-3)</h3>
+<p>El pendiente guarda el <em>valor</em> a escribir, pero no qué crédito se consumió para llegar a él ni si salió de una siembra. Si se reintentara solo, la resolución del reintento volvería a consumir o a sembrar. Sería la misma familia de bug que B-1, aplicada al crédito en lugar del delta.</p>
+<p><strong>Cierre, una simplificación deliberada (R-17):</strong> un pendiente calculado con crédito distinto de cero, o por siembra, se persiste marcado <strong>"requiere compuerta"</strong>.</p>
+<ul>
+  <li>Si las N variantes se confirman en el mismo intento, se resuelve normal.</li>
+  <li>Si no, cada corrida siguiente emite <code>[ERROR] &lt;par&gt;/&lt;sku&gt;: pendiente universal requiere compuerta manual -&gt; no se escribe</code> y no toca nada.</li>
+</ul>
+<p>El costo es que esa combinación, que es rara, se resuelve a mano. A cambio, no existe ninguna vía para aplicar el crédito dos veces. Lo prueba CA-12.</p>
+
+<h3>Hito 5: la compuerta multi-variante y su consumo de crédito (BL-2)</h3>
+<p>Hoy la compuerta absoluta manual (<code>ESCRITURA_ABSOLUTA</code>, ADR 0001) escribe en una sola variante. Para un SKU universal tiene que escribir el mismo absoluto en las N. Además tiene que destrabar los pendientes de R-11(c) y de R-17 (R-16):</p>
+<ul>
+  <li>Descarta cualquier pendiente previo y persiste uno propio marcado "requiere compuerta" antes de escribir. Sin eso, un fallo a mitad de la compuerta dejaría el absoluto a medio aplicar y sin journal: el riesgo de B-1 otra vez.</li>
+  <li>Al confirmar las N variantes, en la misma persistencia, consume <strong>una vez por SKU</strong> las líneas de crédito ya conocidas, con motivo <code>absoluto</code>. También escribe <code>resembradoEn</code>, para que <code>aplicarCortes</code> trate como absorbida una línea que llegue tarde con fecha anterior. Las dos cosas son obligatorias: sin la primera, el crédito conocido se re-suma; sin la segunda, se re-suma el crédito que llega tarde.</li>
+  <li>La compuerta no se conecta a <code>--sku</code>. Hoy no está conectada y conectarla sería un alcance nuevo (R-19).</li>
+</ul>
+<p>Lo prueban CA-11 y CA-12.</p>
+
+<h3>Hito 6: la variante no activada, que tiene dos casos y no uno (IM-2, IM-A)</h3>
+<table>
+  <tr><th>Caso</th><th>Ejemplo</th><th>Qué hace</th></tr>
+  <tr><td>(a) <strong>Ninguna</strong> de las N está activada en la location (<code>available</code> null en todas)</td><td>Galerías Pacífico antes de habilitar el producto</td><td class="si">Benigno: <code>no_activado</code>, igual que hoy un SKU no universal. Sin <code>[ERROR]</code> nuevo, no suma errores, no escribe. Bajo la compuerta sigue la tolerancia que ya existe entre pares (<code>src/resultado.js</code>), sin cambios.</td></tr>
+  <tr><td>(b) <strong>Algunas</strong> están activadas y otras no</td><td>El protector activado para el IP13 pero no para el 17e en el mismo par</td><td class="no">Error de catálogo. No escribe en ninguna (tampoco en las activadas) y emite un <code>[ERROR]</code> por cada variante no activada. El SKU queda no resuelto y suma al contador de errores.</td></tr>
+</table>
+<p>En los dos casos, null nunca entra al máximo ni a la resta, y un pendiente existente queda intacto. Lo prueban CA-11 y CA-13.</p>
+
+<h3>Otros cierres de ingeniería, sin decisión de producto</h3>
+<ul>
+  <li><strong>Conteo esperado</strong> (R-7). La lista lleva la cantidad de variantes de cada SKU. Si la búsqueda devuelve de menos o de más, no se escribe nada.</li>
+  <li><strong>Destino determinístico</strong> (Duda 9). <code>destinos[sku]</code> se fija al <code>inventoryItemId</code> más chico, porque el orden de respuesta de la API no es estable. Además, el chequeo de <code>cambioDeDestino</code> no aplica a los 7 SKUs: para ellos solo se siembra con baseline null.</li>
+  <li><strong>Log y resumen</strong> (R-8). Se agrega la línea <code>[UNIVERSAL]</code>, con variantes PENDIENTE, DRY_RUN y <code>[reintento]</code>. El <code>[RESUMEN]</code> suma las claves <code>universales</code> y <code>universales_pendientes</code>, que nunca se mezclan con <code>duplicados</code>.</li>
+  <li><strong>Código de salida en <code>--sku</code></strong> (R-19). Si un SKU curado no se resuelve, <code>syncUnSku</code> lanza una excepción y <code>main</code> devuelve 1 (invariante 5), sin cambiar el comportamiento para el resto del catálogo.</li>
+</ul>
+
+<h2>3. Alternativas consideradas y descartadas</h2>
+<p>Las decisiones de producto, cada una con tu respuesta literal tal como quedó en la sección "Dudas" del contrato:</p>
+<table>
+  <tr><th>#</th><th>Pregunta</th><th>Elegida (tu cita)</th><th>Descartada</th><th>Por qué se descartó</th></tr>
+  <tr>
+    <td>Duda 1</td>
+    <td>Las N variantes tienen stock distinto entre sí (herencia del sync viejo)</td>
+    <td class="si"><span class="cita">"Tomar el valor más alto como referencia y emparejar solo"</span></td>
+    <td class="no">Reportar la divergencia y no escribir</td>
+    <td>Dejaba trabados justo los SKUs que motivan la feature (7/0/0/0/0) hasta que alguien emparejara a mano. El máximo autocorrige en la misma pasada. Después la Duda 5 lo acotó al bootstrap.</td>
+  </tr>
+  <tr>
+    <td>Duda 4</td>
+    <td>Contabilium cambia mientras hay un pendiente</td>
+    <td class="si"><span class="cita">"Terminar lo pendiente primero, el cambio nuevo espera a la corrida siguiente"</span></td>
+    <td class="no">Recalcular sobre la marcha con el Contabilium nuevo</td>
+    <td>Mezclaba un valor a medio aplicar con un delta nuevo, que es exactamente lo que causó B-1. La opción elegida no pierde ni duplica el movimiento intermedio. Su costo es que el stock nuevo llega una corrida más tarde.</td>
+  </tr>
+  <tr>
+    <td>Duda 5</td>
+    <td>Referencia en régimen estable, cuando ya hubo ventas online</td>
+    <td class="si"><span class="cita">"Sumar las ventas individuales, no tomar el máximo"</span></td>
+    <td class="no">Mantener el máximo siempre</td>
+    <td>Re-infla cada venta online en cuanto Contabilium se mueve (Hito 2). Viola la invariante 1.</td>
+  </tr>
+  <tr>
+    <td>Aparte de la Duda 5</td>
+    <td>¿Se revisan los 7 SKUs aunque Contabilium no cambie?</td>
+    <td class="si"><span class="cita">"Sí, revisar los 7 SKUs en cada corrida"</span></td>
+    <td class="no">Revisarlos solo cuando cambia Contabilium (el atajo del incremental de siempre)</td>
+    <td>Una venta online en una variante dejaba las otras ofreciendo stock vendido durante días, con riesgo de sobreventa. El costo de la elegida: hasta 7 búsquedas a Shopify por corrida y ninguna lectura extra a Contabilium.</td>
+  </tr>
+  <tr>
+    <td>Duda 7</td>
+    <td>Una variante <strong>sube</strong> por encima de <code>escrito</code> (reposición o edición manual en Shopify)</td>
+    <td class="si"><span class="cita">"Ignorar la suba, contar solo las bajas reales"</span></td>
+    <td class="no">Fórmula literal <code>escrito − Σ(escrito − available_i)</code></td>
+    <td>Con la fórmula literal, una suba resta un número negativo e infla la referencia. Con <code>escrito</code> 5 y 8/8/8/8/8 daba 20. Ignorando la suba da 5 y empareja hacia abajo. El stock real se cambia por Contabilium o por la compuerta, no editando Shopify.</td>
+  </tr>
+</table>
+<p>Otras alternativas, descartadas por ingeniería:</p>
+<ul>
+  <li><strong>Detectar SKUs universales por heurística</strong>, por ejemplo porque el SKU nombra varios modelos. Se descartó: el 26% del catálogo es prefijo de otro y el caso 16e/17e es ambiguo de verdad. Se usa la lista explícita con coincidencia exacta (R-1).</li>
+  <li><strong>Un journal completo del consumo de crédito y de la siembra.</strong> Se descartó por costo y riesgo frente a lo raro del caso. Se usa la marca "requiere compuerta" (R-17).</li>
+  <li><strong>Revertir las variantes ya escritas cuando falla otra.</strong> Se descartó porque una reversión es otra escritura que también puede fallar. El journal reintenta hacia adelante (R-5).</li>
+</ul>
+
+<h2>4. Los tres caminos de R-4 (siembra, bootstrap, camino normal)</h2>
+<pre class="mermaid">
+flowchart TD
+  A["SKU en la lista curada, coincidencia EXACTA del string"] --> B{"busqueda exacta: cantidad igual a la esperada?"}
+  B -- no --> E1["ERROR R-7: no escribe ninguna"]
+  B -- si --> C{"variantes activadas en la location?"}
+  C -- "ninguna" --> NA["no_activado, benigno, R-18 a"]
+  C -- "algunas" --> E2["ERROR por variante no activada, R-18 b"]
+  C -- "todas" --> P{"hay entrada pendiente en la libreta?"}
+  P -- si --> J["R-11: reintenta el MISMO nuevoValor, sin calcular nada"]
+  P -- no --> BL{"baseline null?"}
+  BL -- si --> S["a. SIEMBRA: absoluto de Contabilium"]
+  BL -- no --> W{"escrito guardado?"}
+  W -- no --> BS["b. BOOTSTRAP: referencia = max de los available"]
+  W -- si --> CN["c. CAMINO NORMAL: referencia = max 0 de escrito menos la suma de max 0 de escrito menos available_i"]
+  BS --> CE["calcularEscritura UNA vez: referencia + delta contra baseline + credito"]
+  CN --> CE
+  S --> JR["persistir pendiente R-10, marcado requiere compuerta si hay siembra o credito"]
+  CE --> JR
+  JR --> WR["escribir nuevoValor solo en las variantes que difieren, con changeFromQuantity"]
+</pre>
+<pre class="formula">camino (c):  shopifyActual = max(0, escrito − Σ_i max(0, escrito − available_i))
+             nuevoValor    = Math.round(shopifyActual + (Contabilium − baseline) + crédito)
+
+ejemplos normativos (R-4):
+  escrito 5, Shopify 4/5/5/5/5, Contabilium −1   →  referencia 4, nuevoValor 3 en las 5
+  escrito 1, Shopify 0/0, Contabilium sin cambio →  suma de bajas 2, referencia max(0, −1) = 0
+  escrito 5, Shopify 8/5/5/5/5, sin cambio       →  la suba aporta 0, referencia 5, baja la primera de 8 a 5</pre>
+
+<h2>5. Ciclo de vida del journal "pendiente"</h2>
+<pre class="mermaid">
+stateDiagram-v2
+  state "nuevoValor calculado, sin pendiente" as Calc
+  state "error de persistencia, ninguna mutacion" as ErrP
+  state "pendiente persistido en disco" as Pers
+  state "escribiendo las N variantes" as Esc
+  state "pendiente reintentable" as Reint
+  state "pendiente marcado requiere compuerta" as Marc
+  state "reintento en la corrida siguiente" as Retry
+  state "trabado: una variante se movio" as Trab
+  state "compuerta absoluta manual en las N" as Comp
+  state "confirmado: se borra el pendiente" as Conf
+
+  [*] --> Calc
+  Calc --> Conf: las N ya estan en nuevoValor
+  Calc --> ErrP: falla guardar la libreta
+  Calc --> Pers: guardar ANTES de la primera mutacion
+  Pers --> Esc
+  Esc --> Conf: las N confirmadas
+  Esc --> Reint: fallo parcial o crash, sin credito ni siembra
+  Esc --> Marc: fallo parcial o crash, con credito o siembra
+  Reint --> Retry: no lo saltea el atajo y no usa Contabilium nuevo
+  Retry --> Conf: cada variante en nuevoValor o en desde, se escribe la de desde
+  Retry --> Reint: vuelve a fallar una mutacion
+  Retry --> Trab: variante en otro valor, ERROR y no escribe
+  Trab --> Comp: reparacion humana
+  Marc --> Comp: unica salida
+  Comp --> Conf: N confirmadas, consume credito motivo absoluto y escribe resembradoEn
+  Comp --> Marc: fallo parcial de la compuerta
+  Conf --> [*]
+</pre>
+<p>Al llegar a <strong>confirmado</strong>, todo pasa en <strong>una sola</strong> persistencia de la libreta: se borra el pendiente, el SKU queda resuelto, el baseline queda en <code>contabiliumObjetivo</code>, <code>escrito</code> queda en <code>nuevoValor</code> y el destino va al <code>inventoryItemId</code> más chico. Si una parte falla, no avanza ninguna. En DRY_RUN no se persiste nada.</p>
+
+<h2>6. Riesgos aceptados y lo que queda abierto</h2>
+<table>
+  <tr><th>Tema</th><th>Estado</th></tr>
+  <tr><td>Si el runner muere antes de <code>actions/cache/save</code>, la corrida siguiente restaura una libreta sin el pendiente, o con un <code>escrito</code> más viejo (Duda 6)</td><td class="parcial">Riesgo informado. Ningún diseño dentro del proceso lo evita. La reparación es la compuerta absoluta manual.</td></tr>
+  <tr><td>Primera corrida tras desplegar, con SKUs ya divergentes como 9/9/0 (Duda 3)</td><td class="si">Con baseline null va por siembra; con baseline y sin <code>escrito</code>, por bootstrap. En los dos casos no hace falta emparejar a mano antes de activar.</td></tr>
+  <tr><td>Cómo cuentan los universales en <code>causa_desconocida</code> (Duda 10)</td><td class="parcial">Diferida, fuera de esta feature. Se trata si genera ruido en producción.</td></tr>
+  <tr><td>Conectar la compuerta a <code>--sku</code></td><td class="no">Fuera de alcance (R-19).</td></tr>
+</table>
+
+<h2>7. Cobertura de los criterios</h2>
+<table>
+  <tr><th>Tema</th><th>Requisitos</th><th>Criterios</th></tr>
+  <tr><td>Lista curada exacta</td><td>R-1</td><td>CA-1</td></tr>
+  <tr><td>N variantes, cálculo único y tres caminos</td><td>R-2 a R-5, R-7, R-13</td><td>CA-2 (5 variantes), CA-3 (2 variantes)</td></tr>
+  <tr><td>Sin regresión fuera de la lista</td><td>R-6, R-9</td><td>CA-4, CA-6</td></tr>
+  <tr><td>Log y <code>[RESUMEN]</code></td><td>R-8</td><td>CA-5</td></tr>
+  <tr><td>Journal pendiente y B-1</td><td>R-10, R-11</td><td>CA-7</td></tr>
+  <tr><td>Contabilium cambia durante un pendiente</td><td>R-12</td><td>CA-8</td></tr>
+  <tr><td><code>escrito</code> y bypass del atajo</td><td>R-13, R-14</td><td>CA-9</td></tr>
+  <tr><td>Migración del fixture</td><td>R-15</td><td>CA-10</td></tr>
+  <tr><td>Compuerta multi-variante</td><td>R-16</td><td>CA-11</td></tr>
+  <tr><td>Pendiente con crédito o siembra</td><td>R-17</td><td>CA-12</td></tr>
+  <tr><td>Variante no activada, casos (a) y (b)</td><td>R-18</td><td>CA-13</td></tr>
+  <tr><td>Corrida <code>--sku</code></td><td>R-19</td><td>CA-14</td></tr>
+</table>
+
+<div class="rec"><strong>Para aprobar:</strong> el diseño de las secciones 4 y 5 (los tres caminos de R-4 y el ciclo del journal) con el alcance de los <code>src/shopify.js</code> y <code>src/sync.js</code> que lista el contrato. Si algo de lo de arriba no coincide con lo que decidiste, se corrige acá antes de implementar.</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: true, theme: "neutral", flowchart: { htmlLabels: true } });
+</script>
+</body>
+</html>

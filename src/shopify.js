@@ -597,3 +597,85 @@ export async function leerNivelesEnTodasLasLocations(sku) {
       available: n.quantities?.find((q) => q.name === "available")?.quantity ?? null,
     }));
 }
+
+// -----------------------------------------------------------------------------
+// SKUs universales (requisito R-1)
+// -----------------------------------------------------------------------------
+// Lista curada y explícita: un SKU que corresponde a varios modelos de
+// teléfono distintos, resuelto en Shopify como N variantes separadas con el
+// mismo SKU exacto. No es una heurística: se infiere solo de esta lista, no
+// de la forma del string. Pertenencia por igualdad exacta del string
+// completo, nunca por prefijo ni extensión.
+export const SKUS_UNIVERSALES = new Map([
+  ["APPLYFIT-CLEAR-IP16PRO-17-17PRO", 3],
+  ["APPLYFIT-CLEAR-S24-S25", 2],
+  ["APPLYFIT-CLEAR-IP15-16", 2],
+  ["APPLYFIT-CLEAR-IP13-13PRO-14-16E-17E", 5],
+  ["APPLYFIT-CLEAR-IP16PM-17PM", 2],
+  ["APPLYFIT-CLEAR-IP13PM-14PLUS", 2],
+  ["APPLYFIT-CLEAR-S24PLUS-S25PLUS", 2],
+]);
+
+// Devuelve la cantidad de variantes esperadas si `sku` es universal, o
+// `undefined` si no lo es. Igualdad exacta del string completo.
+export function variantesUniversales(sku) {
+  return SKUS_UNIVERSALES.get(sku);
+}
+
+// true/false explícito, por si conviene a un llamador en vez de `undefined`.
+export function esSkuUniversal(sku) {
+  return SKUS_UNIVERSALES.has(sku);
+}
+
+export class ConteoVariantesUniversalError extends Error {
+  constructor(sku, esperadas, encontradas, topeAlcanzado) {
+    super(
+      `${sku}: se esperaban ${esperadas} variantes exactas y se encontraron ${encontradas}` +
+        (topeAlcanzado ? " (tope de busqueda alcanzado)" : "")
+    );
+    this.name = "ConteoVariantesUniversalError";
+    this.sku = sku;
+    this.esperadas = esperadas;
+    this.encontradas = encontradas;
+    this.topeAlcanzado = topeAlcanzado;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// resolverSkuUniversal — resolucion multi-variante para un SKU curado (R-2, R-7)
+// -----------------------------------------------------------------------------
+// Misma QUERY_POR_SKU, mismo CANDIDATOS_POR_SKU y la misma verificacion de
+// `node.sku` exacto que resolverSku. No consulta ni escribe la cache: para un
+// curado la cache NUNCA elige la candidata (R-2). Nunca lanza SkuAmbiguoError.
+// R-7: la cantidad de variantes exactas se controla contra la cantidad
+// ESPERADA de la lista curada (T01), no contra la cache ni contra el tope.
+export async function resolverSkuUniversal(sku, locationId, opciones = {}) {
+  const esperadas = variantesUniversales(sku);
+  if (esperadas === undefined) {
+    throw new Error(`resolverSkuUniversal(${sku}): no es un SKU de la lista curada`);
+  }
+  if (!locationId) {
+    throw new Error(`resolverSkuUniversal(${sku}): locationId es obligatorio, no hay default`);
+  }
+  const consultar = typeof opciones?.consultar === "function" ? opciones.consultar : shopifyGraphQL;
+  const data = await consultar(QUERY_POR_SKU, {
+    query: `sku:"${escaparValorBusqueda(sku)}"`,
+    locationId,
+    first: CANDIDATOS_POR_SKU,
+  });
+
+  const nodos = (data?.productVariants?.edges ?? []).map((e) => e?.node).filter(Boolean);
+  const topeAlcanzado = data?.productVariants?.pageInfo?.hasNextPage === true;
+  // Coincidencia EXACTA: aparecer en la busqueda tokenizada no alcanza (invariante 3).
+  const exactos = nodos.filter((n) => n.sku === sku && n.inventoryItem?.id);
+
+  if (exactos.length !== esperadas) {
+    throw new ConteoVariantesUniversalError(sku, esperadas, exactos.length, topeAlcanzado);
+  }
+
+  return exactos.map((n) => ({
+    variantId: n.id ?? null,
+    inventoryItemId: n.inventoryItem.id,
+    available: availableDe(n),
+  }));
+}

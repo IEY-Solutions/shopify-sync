@@ -15,7 +15,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { getStockDeposito, buscarComprobantes, fetchComprobantesDetalle, crearSesionContabilium } from "./contabilium.js";
-import { resolverSku, setearStock, SkuAmbiguoError, leerCacheSku } from "./shopify.js";
+import {
+  resolverSku,
+  setearStock,
+  SkuAmbiguoError,
+  leerCacheSku,
+  esSkuUniversal,
+  resolverSkuUniversal,
+} from "./shopify.js";
 import { esNoSincronizable } from "./no-sincronizables.js";
 import { detectarAnomalias, formatearAnomalias } from "./anomalias.js";
 import {
@@ -88,7 +95,57 @@ function esObjetoPlano(x) {
   return Boolean(x) && typeof x === "object" && !Array.isArray(x);
 }
 
-function parsearContabilidad(crudo) {
+// R-10: forma de una entrada pendiente por SKU universal. Valida solo la
+// FORMA del campo (la logica de journaling-antes-de-escribir es de T06/T07).
+function esVariantePendienteValida(v) {
+  return (
+    esObjetoPlano(v) &&
+    typeof v.variantId === "string" &&
+    v.variantId.length > 0 &&
+    typeof v.inventoryItemId === "string" &&
+    v.inventoryItemId.length > 0 &&
+    typeof v.desde === "number" &&
+    Number.isFinite(v.desde)
+  );
+}
+
+function esEntradaPendienteValida(p) {
+  return (
+    esObjetoPlano(p) &&
+    Number.isInteger(p.nuevoValor) &&
+    typeof p.contabiliumObjetivo === "number" &&
+    Number.isFinite(p.contabiliumObjetivo) &&
+    Array.isArray(p.variantes) &&
+    p.variantes.length > 0 &&
+    p.variantes.every(esVariantePendienteValida) &&
+    (p.requiereCompuerta === undefined || typeof p.requiereCompuerta === "boolean")
+  );
+}
+
+// R-13: escrito es un entero >= 0 (Shopify solo acepta enteros, AGENTS.md
+// invariante 6).
+function esEscritoValido(e) {
+  return Number.isInteger(e) && e >= 0;
+}
+
+// R-10/R-13: filtra sku -> valor crudo quedandose solo con lo que pasa el
+// validador. Una entrada mal formada se descarta con [ERROR] y NO invalida el
+// resto de la libreta (ningun otro SKU se ve afectado).
+function filtrarLibretaCampo(crudo, validador, etiqueta, nombrePar) {
+  const salida = {};
+  if (!esObjetoPlano(crudo)) return salida;
+  const prefijo = nombrePar ? `${nombrePar}/` : "";
+  for (const [sku, valor] of Object.entries(crudo)) {
+    if (validador(valor)) {
+      salida[sku] = valor;
+    } else {
+      console.error(`[ERROR] ${prefijo}${sku}: ${etiqueta} mal formado, se descarta`);
+    }
+  }
+  return salida;
+}
+
+function parsearContabilidad(crudo, nombrePar) {
   const vigente = crudo && crudo.__v === SNAPSHOT_VERSION;
   return {
     corte: vigente && typeof crudo.corte === "string" ? crudo.corte : null,
@@ -97,21 +154,39 @@ function parsearContabilidad(crudo) {
     resembradoPor: vigente && esObjetoPlano(crudo.resembradoPor) ? crudo.resembradoPor : {},
     // R-9: sku -> inventoryItemId contra el que avanzo el baseline de este par.
     destinos: vigente && esObjetoPlano(crudo.destinos) ? crudo.destinos : {},
+    // R-10: sku -> entrada pendiente (journal antes de escribir). Opcional,
+    // igual que destinos: una libreta vieja sin este campo sigue siendo valida.
+    pendientes: vigente ? filtrarLibretaCampo(crudo.pendientes, esEntradaPendienteValida, "pendiente", nombrePar) : {},
+    // R-13: sku -> ultimo nuevoValor confirmado en las N variantes.
+    escritos: vigente ? filtrarLibretaCampo(crudo.escritos, esEscritoValido, "escrito", nombrePar) : {},
   };
 }
 
 // Lee la libreta cruda una sola vez y devuelve todas sus partes.
 // `ultimaCorridaExitosa` (diseño viejo) se retiro (D-7): no se lee ni se copia.
-export function cargarLibretaCompleta(ruta = SNAPSHOT_PATH) {
+// `par` (opcional, R-8): nombre del par para prefijar [ERROR] de pendientes/
+// escritos mal formados. Sin par, se omite el prefijo (llamadores legados que
+// no conocen el par en este punto).
+export function cargarLibretaCompleta(ruta = SNAPSHOT_PATH, par = null) {
   try {
     if (!existsSync(ruta)) {
-      return { skus: {}, contabilium: null, corte: null, consumos: {}, resembradoEn: {}, resembradoPor: {}, destinos: {} };
+      return {
+        skus: {},
+        contabilium: null,
+        corte: null,
+        consumos: {},
+        resembradoEn: {},
+        resembradoPor: {},
+        destinos: {},
+        pendientes: {},
+        escritos: {},
+      };
     }
     const crudo = JSON.parse(readFileSync(ruta, "utf-8"));
     return {
       skus: parsearLibreta(crudo) ?? {},
       contabilium: parsearSnapshotContabilium(crudo),
-      ...parsearContabilidad(crudo),
+      ...parsearContabilidad(crudo, par?.nombre ?? null),
     };
   } catch {
     // Archivo corrupto: mismo shape de siempre (test/libreta.test.js lo congela).
@@ -166,7 +241,65 @@ export function guardarSnapshot(snap, ruta = SNAPSHOT_PATH, contabilium = null, 
   let destinos = contabilidad && contabilidad.destinos != null ? contabilidad.destinos : undefined;
   if (destinos === undefined) destinos = cargarLibretaCompleta(ruta).destinos;
   if (esObjetoPlano(destinos) && Object.keys(destinos).length > 0) payload.destinos = destinos;
+
+  // R-10/R-13: mismo criterio que destinos — una persistencia que no pide
+  // explicitamente tocar pendientes/escritos (checkpoint, guardado final,
+  // --full) CONSERVA lo que ya hay en disco; nunca los pisa ni los borra.
+  let pendientes = contabilidad && contabilidad.pendientes != null ? contabilidad.pendientes : undefined;
+  if (pendientes === undefined) pendientes = cargarLibretaCompleta(ruta).pendientes;
+  if (esObjetoPlano(pendientes) && Object.keys(pendientes).length > 0) payload.pendientes = pendientes;
+
+  let escritos = contabilidad && contabilidad.escritos != null ? contabilidad.escritos : undefined;
+  if (escritos === undefined) escritos = cargarLibretaCompleta(ruta).escritos;
+  if (esObjetoPlano(escritos) && Object.keys(escritos).length > 0) payload.escritos = escritos;
+
   writeFileSync(ruta, JSON.stringify(payload, null, 2), "utf-8");
+}
+
+// R-10: persistencia INMEDIATA de la entrada pendiente de un SKU universal,
+// en disco, antes de cualquier mutacion. Conserva todo lo demas de la libreta
+// (patron de destinos: ninguna otra persistencia pisa esto sin pedirlo).
+// Si la entrada no tiene la forma valida o si la escritura falla, LANZA: el
+// llamador nunca se entera en silencio (invariante 5 de AGENTS.md). El
+// momento en que se llama (antes de la primera mutacion) es de T06/T07.
+export function persistirPendienteUniversal(sku, entrada, ruta = SNAPSHOT_PATH) {
+  if (!esEntradaPendienteValida(entrada)) {
+    throw new Error(`persistirPendienteUniversal: entrada pendiente mal formada para ${sku}`);
+  }
+  const previa = cargarLibretaCompleta(ruta);
+  const pendientes = { ...previa.pendientes, [sku]: entrada };
+  guardarSnapshot(previa.skus, ruta, previa.contabilium, {
+    corte: previa.corte,
+    consumos: previa.consumos,
+    resembradoEn: previa.resembradoEn,
+    resembradoPor: previa.resembradoPor,
+    destinos: previa.destinos,
+    pendientes,
+    escritos: previa.escritos,
+  });
+}
+
+// R-10/R-13: UNA sola persistencia que borra la entrada pendiente del SKU,
+// fija `escrito` y avanza baseline y destino (los recibe ya actualizados en
+// `snap`/`contabilium`/`destino`, calcularlos es responsabilidad de T06/T07).
+export function confirmarSkuUniversal({ sku, snap, contabilium, contabilidad, escrito, destino, ruta = SNAPSHOT_PATH }) {
+  if (!esEscritoValido(escrito)) {
+    throw new Error(`confirmarSkuUniversal: escrito invalido para ${sku}: ${escrito}`);
+  }
+  const pendientes = { ...(contabilidad?.pendientes ?? {}) };
+  delete pendientes[sku];
+  const escritos = { ...(contabilidad?.escritos ?? {}), [sku]: escrito };
+  const destinos = { ...(contabilidad?.destinos ?? {}) };
+  if (destino != null) destinos[sku] = destino;
+  guardarSnapshot(snap, ruta, contabilium, {
+    corte: contabilidad?.corte ?? null,
+    consumos: contabilidad?.consumos ?? {},
+    resembradoEn: contabilidad?.resembradoEn ?? {},
+    resembradoPor: contabilidad?.resembradoPor ?? {},
+    destinos,
+    pendientes,
+    escritos,
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -289,6 +422,68 @@ export function calcularEscritura({ baseline, contabiliumActual, shopifyActual }
 }
 
 // -----------------------------------------------------------------------------
+// calcularUnico — calculo unico de nuevoValor para un SKU universal (N
+// variantes, R-3/R-4). Pura, sin IO. Elige uno de tres caminos excluyentes
+// (sin entrada pendiente en la libreta, R-10/R-11: eso lo decide el llamador,
+// no esta funcion):
+//   (a) SIEMBRA: baseline null -> absoluto de Contabilium.
+//   (b) BOOTSTRAP: sin `escrito` guardado -> el valor comun de las N
+//       variantes, o el MAXIMO si divergen.
+//   (c) NORMAL: con `escrito` guardado -> max(0, escrito - suma de las
+//       bajas por variante, cada una con su propio piso 0; doble piso 0).
+// En los tres caminos nuevoValor se calcula una sola vez reutilizando
+// calcularEscritura, y el credito acreditable (si lo hay) se suma una sola
+// vez, con la misma formula que ya usan los SKUs no universales
+// (src/sync.js:1159).
+//   baseline          — lo que Contabilium decia en la corrida ANTERIOR
+//                        (null si es la primera vez).
+//   contabiliumActual — lo que Contabilium dice AHORA.
+//   escrito           — ultimo nuevoValor confirmado en las N variantes
+//                        (null/undefined si no hay, R-13).
+//   credito           — credito acreditable del SKU en esta corrida (R-3).
+//   availables        — array con el `available` leido EN ESTA CORRIDA de
+//                        cada una de las N variantes exactas.
+// Devuelve { nuevoValor, camino, shopifyActual }. `camino` es "siembra",
+// "bootstrap" o "normal" (R-17 lo necesita para la marca de "requiere
+// compuerta").
+// Contrato R-18: ninguna variante de `availables` puede ser null/undefined
+// aca (eso significa no_activado y el llamador no debe invocar esta funcion
+// en ese caso); si llega, se rechaza en vez de tratarse como 0.
+// -----------------------------------------------------------------------------
+export function calcularUnico({ baseline, contabiliumActual, escrito, credito = 0, availables }) {
+  if (!Array.isArray(availables) || availables.length === 0) {
+    throw new Error("calcularUnico: availables tiene que ser un array no vacio con el available de cada variante");
+  }
+  if (availables.some((available) => available === null || available === undefined)) {
+    throw new Error("calcularUnico: no se puede calcular con una variante null/undefined (R-18)");
+  }
+
+  let camino;
+  let shopifyActual;
+  if (baseline === null || baseline === undefined) {
+    camino = "siembra";
+    shopifyActual = null; // no se usa: calcularEscritura siembra con el absoluto.
+  } else if (escrito === null || escrito === undefined) {
+    camino = "bootstrap";
+    const [primero, ...resto] = availables;
+    shopifyActual = resto.some((available) => available !== primero) ? Math.max(...availables) : primero;
+  } else {
+    camino = "normal";
+    const sumaBajas = availables.reduce((total, available) => total + Math.max(0, escrito - available), 0);
+    shopifyActual = Math.max(0, escrito - sumaBajas);
+  }
+
+  const { nuevoValor: nuevoValorSinCredito } = calcularEscritura({
+    baseline,
+    contabiliumActual,
+    shopifyActual: shopifyActual ?? 0,
+  });
+  const nuevoValor = Math.round(nuevoValorSinCredito + credito);
+
+  return { nuevoValor, camino, shopifyActual };
+}
+
+// -----------------------------------------------------------------------------
 // armarPlanDeEscritura — por SKU, calcula la escritura (via calcularEscritura)
 // y la amarra a la location/par que la origino. No llama a Shopify (R-2/R-4).
 // -----------------------------------------------------------------------------
@@ -315,6 +510,17 @@ export function armarPlanDeEscritura(par, stockPorSku, baselinePorSku, shopifyPo
 // para contar al final.
 // `d` son las dependencias de Shopify y del modo (por defecto, las reales):
 // syncUnSku las recibe inyectadas (DISENO-INTERFAZ 4.2).
+// R-5: destinos[sku] de un SKU universal avanza al inventoryItemId
+// NUMERICAMENTE mas chico de las N variantes (nunca por orden de respuesta ni
+// por comparacion de string: ver escenario G de CA-2/CA-3).
+function numeroDeGid(gid) {
+  const n = Number(String(gid).split("/").pop());
+  return Number.isFinite(n) ? n : Infinity;
+}
+function inventoryItemIdMasChico(variantes) {
+  return [...variantes].sort((a, b) => numeroDeGid(a.inventoryItemId) - numeroDeGid(b.inventoryItemId))[0].inventoryItemId;
+}
+
 // R-9 + E2: el destino conocido por la libreta difiere del resuelto, no aparece
 // en la respuesta y la busqueda llego al tope: no se sabe si fue renombrado o
 // quedo afuera de las visibles.
@@ -444,6 +650,9 @@ export async function syncUnSku(sku, manualQty = null, deps = {}) {
     guardarSnapshot,
     getStockDeposito,
     resolverSku,
+    resolverSkuUniversal,
+    persistirPendienteUniversal,
+    confirmarSkuUniversal,
     setearStock,
     esDryRun,
     ahora: () => new Date(),
@@ -472,6 +681,51 @@ export async function syncUnSku(sku, manualQty = null, deps = {}) {
   const libreta = d.cargarLibretaCompleta(ruta);
   const baseline = libreta.contabilium?.[skuNorm] ?? null;
   const destinosPrevios = esObjetoPlano(libreta.destinos) ? libreta.destinos : {};
+
+  // R-19: un SKU de la lista curada sigue el MISMO camino universal que
+  // ejecutarPar (resolucion de N variantes, journal, reintento de R-11, caso
+  // (b)/(a) de R-18), con el mismo prefijo de log "dot/<sku>" (--sku siempre
+  // usa la libreta del par "dot"). Si no queda resuelto en esta corrida, se
+  // LANZA para que el catch de src/main.js lo refleje en el codigo de salida
+  // (invariante 5 de AGENTS.md); no hay atajo del incremental que bypasear
+  // (R-14 no aplica aca) ni compuerta ESCRITURA_ABSOLUTA conectada (R-16
+  // queda fuera de alcance de este punto de entrada).
+  if (esSkuUniversal(skuNorm)) {
+    const par = { nombre: "dot", locationId: process.env.SHOPIFY_DOT_LOCATION_ID };
+    const contab = {
+      corte: libreta.corte ?? null,
+      consumos: { ...(libreta.consumos ?? {}) },
+      resembradoEn: { ...(libreta.resembradoEn ?? {}) },
+      resembradoPor: { ...(libreta.resembradoPor ?? {}) },
+    };
+    const destinos = { ...destinosPrevios };
+    const snapshotNuevo = { ...libreta.skus };
+    const contabiliumNuevo = new Map(Object.entries(libreta.contabilium ?? {}));
+    const resuelto = await procesarSkuUniversal({
+      deps: d,
+      par,
+      sku: skuNorm,
+      cantidad: objetivo,
+      baseline,
+      libreta,
+      contab,
+      lineasSku: [],
+      credito: { credito: 0, claves: [] },
+      destinos,
+      snapshotNuevo,
+      contabiliumNuevo,
+      ruta,
+      tInicioLectura,
+      tIso: tInicioLectura.toISOString(),
+      dryRun: d.esDryRun(),
+    });
+    console.log(`=== Fin ===\n`);
+    if (resuelto.resultado === "error") {
+      throw new Error(`syncUnSku: ${skuNorm} quedo sin resolver en esta corrida (R-19)`);
+    }
+    return;
+  }
+
   const extra = { destinoLibreta: destinosPrevios[skuNorm] ?? null };
   const resultado = await procesarSku(skuNorm, objetivo, baseline, process.env.SHOPIFY_DOT_LOCATION_ID, d, extra);
 
@@ -629,10 +883,13 @@ export async function syncTodos({ full = false } = {}) {
 export const DEPS_REALES = {
   getStockDeposito,
   resolverSku,
+  resolverSkuUniversal,
   leerCacheSku: () => leerCacheSku(),
   setearStock,
   cargarLibretaCompleta,
   guardarSnapshot,
+  persistirPendienteUniversal,
+  confirmarSkuUniversal,
   rutaSnapshotPara,
   esDryRun,
   SNAPSHOT_PATH,
@@ -915,6 +1172,488 @@ function registroDe(ctx) {
   return ctx.registro;
 }
 
+// -----------------------------------------------------------------------------
+// procesarSkuUniversal — camino universal para UN SKU curado dentro de
+// ejecutarParEnCorrida (T06: R-2, R-3, R-4, R-5, R-7, R-9, R-10, R-13, R-14).
+// -----------------------------------------------------------------------------
+// Devuelve { resultado, credito? }. `resultado` es uno de los contadores ya
+// existentes ("actualizado", "sin_cambios", "error", "no_activado", "dry").
+// NO toca snapshotNuevo/contabiliumNuevo/destinos del llamador salvo
+// `destinos` (lo hace directo, ya que viaja junto con la contabilidad del par).
+//
+// R-16 (compuerta multi-variante) tiene su propio camino,
+// `procesarSkuUniversalAbsoluto` (T12): el llamador solo invoca ESTE camino
+// con `!alcanzaAbsoluta`.
+//
+// FUERA DE ALCANCE (documentado, no resuelto aca):
+//   - R-18 (variante no activada): el tratamiento completo (caso a/b con sus
+//     matices de DRY_RUN, pendiente previo, otro par) es T11. Aca el minimo
+//     indispensable para no romper: todas null -> "no_activado" benigno sin
+//     [ERROR]; una mezcla de activadas/no activadas -> error visible, sin
+//     mutar. No hay [UNIVERSAL] ni claves de RESUMEN especificas (T09).
+//   - Contabilium cambiando durante el pendiente, el sufijo ` [reintento]` de
+//     `[UNIVERSAL]` y la marca de credito/siembra en un reintento (T08-T10).
+// -----------------------------------------------------------------------------
+async function procesarSkuUniversal({
+  deps,
+  par,
+  sku,
+  cantidad,
+  baseline,
+  libreta,
+  contab,
+  lineasSku,
+  credito,
+  destinos,
+  snapshotNuevo,
+  contabiliumNuevo,
+  ruta,
+  tInicioLectura,
+  tIso,
+  dryRun,
+}) {
+  // R-11 (T07): con un pendiente ya existente, se reintenta el MISMO
+  // nuevoValor persistido (sin delta, sin maximo, sin usar `escrito`). Una
+  // entrada que ya pida compuerta manual no se toca (T10).
+  const entradaPendiente = esObjetoPlano(libreta.pendientes) ? libreta.pendientes[sku] : null;
+  if (entradaPendiente) {
+    if (entradaPendiente.requiereCompuerta) {
+      // R-17: una entrada marcada no la reintenta sola el camino automatico
+      // de R-11; queda igual hasta que la compuerta de R-16 la cierre (T12).
+      console.error(`  [ERROR] ${par.nombre}/${sku}: pendiente universal requiere compuerta manual -> no se escribe`);
+      return { resultado: "error" };
+    }
+    return reintentarSkuUniversal({ deps, par, sku, entradaPendiente, contab, destinos, snapshotNuevo, contabiliumNuevo, ruta, dryRun });
+  }
+
+  let variantes;
+  try {
+    variantes = await deps.resolverSkuUniversal(sku, par.locationId);
+  } catch (err) {
+    console.error(`  [ERROR] ${par.nombre}/${sku}: ${err.message}`);
+    return { resultado: "error" };
+  }
+
+  const disponibles = variantes.map((v) => v.available);
+  const activadas = disponibles.filter((a) => a !== null && a !== undefined);
+  if (activadas.length === 0) {
+    // R-18 caso (a): todas las variantes sin activar es benigno, igual que un
+    // no curado hoy. Sin [ERROR], sin contador de error, sin persistir nada.
+    return { resultado: "no_activado" };
+  }
+  if (activadas.length !== disponibles.length) {
+    // R-18 caso (b): catalogo inconsistente dentro del par -> error, una
+    // linea L18 por cada variante NO activada, nunca por las activadas.
+    // Cero mutaciones (ninguna escritura llega a ejecutarse en este camino).
+    for (const v of variantes) {
+      if (v.available === null || v.available === undefined) {
+        console.error(
+          `  [ERROR] ${par.nombre}/${sku}: variante ${v.variantId} no esta activada en la location del par, no se resuelve`
+        );
+      }
+    }
+    return { resultado: "error" };
+  }
+
+  const escrito = libreta.escritos?.[sku] ?? null;
+  let calc;
+  try {
+    calc = calcularUnico({ baseline, contabiliumActual: cantidad, escrito, credito: credito.credito, availables: disponibles });
+  } catch (err) {
+    console.error(`  [ERROR] ${par.nombre}/${sku}: ${err.message}`);
+    return { resultado: "error" };
+  }
+  const { nuevoValor, camino } = calc;
+  const difieren = variantes.filter((v) => v.available !== nuevoValor);
+
+  if (difieren.length > 0 && dryRun) {
+    console.log(`  [UNIVERSAL] ${par.nombre}/${sku}: ${variantes.length} variantes -> ${nuevoValor} (no se escribe, DRY_RUN=true)`);
+    return { resultado: "dry" };
+  }
+
+  if (difieren.length > 0) {
+    // R-10: journal ANTES de la primera mutacion. R-17: si el calculo uso
+    // credito acreditable (!=0) o el camino de siembra, la entrada queda
+    // marcada "requiere compuerta" (no se reintenta sola por R-11; T10).
+    const requiereCompuerta = camino === "siembra" || credito.credito > 0;
+    const entradaPendiente = {
+      nuevoValor,
+      contabiliumObjetivo: cantidad,
+      variantes: variantes.map((v) => ({ variantId: v.variantId, inventoryItemId: v.inventoryItemId, desde: v.available })),
+      ...(requiereCompuerta ? { requiereCompuerta: true } : {}),
+    };
+    try {
+      deps.persistirPendienteUniversal(sku, entradaPendiente, ruta);
+    } catch {
+      console.error(`  [ERROR] ${par.nombre}/${sku}: no se pudo persistir la entrada pendiente, no se escribe`);
+      return { resultado: "error" };
+    }
+
+    const yaEstaban = variantes.length - difieren.length;
+    let escritas = 0;
+    let fallidas = 0;
+    for (const v of difieren) {
+      try {
+        await deps.setearStock(v.inventoryItemId, nuevoValor, v.available, par.locationId);
+        escritas++;
+      } catch (err) {
+        console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al escribir en Shopify -> ${err.message}`);
+        fallidas++;
+      }
+    }
+    if (fallidas > 0) {
+      console.log(
+        `  [UNIVERSAL] ${par.nombre}/${sku}: ${variantes.length} variantes -> ${nuevoValor} PENDIENTE (escritas=${escritas}, ya_estaban=${yaEstaban}, fallidas=${fallidas})`
+      );
+      if (requiereCompuerta) {
+        console.error(`  [ERROR] ${par.nombre}/${sku}: pendiente universal requiere compuerta manual -> no se escribe`);
+      }
+      return { resultado: "error" };
+    }
+    console.log(`  [UNIVERSAL] ${par.nombre}/${sku}: ${variantes.length} variantes -> ${nuevoValor} (escritas=${escritas}, ya_estaban=${yaEstaban})`);
+  }
+
+  // Resuelto: las N variantes quedan (o ya estaban) en nuevoValor. R-13/R-5.
+  if (!dryRun) {
+    const destino = inventoryItemIdMasChico(variantes);
+    destinos[sku] = destino;
+
+    if (camino === "siembra") {
+      contab.resembradoEn[sku] = tIso;
+      contab.resembradoPor[sku] = "sembrado";
+      for (const l of lineasSku) {
+        const clave = claveConsumo(l.comprobanteId, l.sku);
+        if (Object.prototype.hasOwnProperty.call(contab.consumos, clave)) continue;
+        if (new Date(l.referencia).getTime() < tInicioLectura.getTime()) {
+          contab.consumos[clave] = { cantidad: l.cantidad, motivo: "sembrado", referencia: l.referencia, en: tIso };
+        }
+      }
+    } else if (credito.credito > 0) {
+      for (const clave of credito.claves) {
+        const l = lineasSku.find((x) => claveConsumo(x.comprobanteId, x.sku) === clave);
+        if (l) contab.consumos[clave] = { cantidad: l.cantidad, motivo: "delta", referencia: l.referencia, en: tIso };
+      }
+    }
+
+    // snapshotNuevo/contabiliumNuevo son los mapas EN MEMORIA de toda la
+    // corrida (ejecutarParEnCorrida): avanzarlos aca, antes de persistir, evita
+    // que esta persistencia inmediata (R-10/R-13) pise en disco el progreso de
+    // otros SKUs resueltos desde el ultimo checkpoint periodico.
+    snapshotNuevo[sku] = cantidad;
+    contabiliumNuevo.set(sku, cantidad);
+    // pendientes/escritos de OTROS SKUs no viven en memoria: se leen frescos
+    // de disco para no perder la entrada pendiente que otro SKU universal
+    // pudo haber persistido mas temprano en esta misma corrida.
+    const previa = deps.cargarLibretaCompleta(ruta, par);
+    deps.confirmarSkuUniversal({
+      sku,
+      snap: snapshotNuevo,
+      contabilium: contabiliumNuevo,
+      contabilidad: {
+        corte: contab.corte,
+        consumos: contab.consumos,
+        resembradoEn: contab.resembradoEn,
+        resembradoPor: contab.resembradoPor,
+        destinos,
+        pendientes: previa.pendientes,
+        escritos: previa.escritos,
+      },
+      escrito: nuevoValor,
+      destino,
+      ruta,
+    });
+  }
+
+  return {
+    resultado: difieren.length > 0 ? "actualizado" : "sin_cambios",
+    credito: credito.credito > 0 ? credito.credito : 0,
+    universalConfirmado: !dryRun,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// reintentarSkuUniversal — R-11 (T07): retoma una entrada pendiente de un SKU
+// universal con el MISMO `nuevoValor` ya persistido. No calcula delta, no
+// toma maximo y no usa `escrito` (R-4 no aplica a un reintento).
+//
+// Para cada variante de la entrada, con la busqueda exacta de T03:
+//   (a) available === nuevoValor -> ya satisfecha, no se mutа.
+//   (b) available === desde      -> se escribe con changeFromQuantity = desde.
+//   (c) cualquier otro valor     -> no se escribe NADA, [ERROR] y la entrada
+//                                   sigue pendiente (no se resuelve este SKU).
+// Si la busqueda no trae alguna variante de la entrada, o trae alguna que no
+// estaba, tampoco se escribe nada.
+// -----------------------------------------------------------------------------
+async function reintentarSkuUniversal({ deps, par, sku, entradaPendiente, contab, destinos, snapshotNuevo, contabiliumNuevo, ruta, dryRun }) {
+  const { nuevoValor, contabiliumObjetivo, variantes: variantesPendiente } = entradaPendiente;
+
+  let variantesActuales;
+  try {
+    variantesActuales = await deps.resolverSkuUniversal(sku, par.locationId);
+  } catch (err) {
+    console.error(`  [ERROR] ${par.nombre}/${sku}: ${err.message}`);
+    return { resultado: "error" };
+  }
+
+  if (variantesActuales.length !== variantesPendiente.length) {
+    console.error(`  [ERROR] ${par.nombre}/${sku}: la cantidad de variantes cambio durante un pendiente universal -> no se escribe`);
+    return { resultado: "error" };
+  }
+  const actualesPorId = new Map(variantesActuales.map((v) => [v.inventoryItemId, v]));
+  for (const vp of variantesPendiente) {
+    if (!actualesPorId.has(vp.inventoryItemId)) {
+      console.error(`  [ERROR] ${par.nombre}/${sku}: no se encontro la variante ${vp.inventoryItemId} del pendiente universal -> no se escribe`);
+      return { resultado: "error" };
+    }
+  }
+
+  // R-18, sobre un pendiente ya existente: si TODAS las variantes de la
+  // entrada vienen null, es benigno (no_activado) y la entrada no se toca ni
+  // se descarta (espera la reactivacion). Si solo ALGUNAS vienen null, es
+  // error (L18 por cada una, nunca por las activadas) y tampoco se escribe
+  // ni se toca nada de la entrada: R-18 tiene prioridad sobre R-11(c).
+  const nulasPendiente = variantesPendiente.filter((vp) => {
+    const available = actualesPorId.get(vp.inventoryItemId).available;
+    return available === null || available === undefined;
+  });
+  if (nulasPendiente.length === variantesPendiente.length) {
+    return { resultado: "no_activado" };
+  }
+  if (nulasPendiente.length > 0) {
+    for (const vp of nulasPendiente) {
+      console.error(
+        `  [ERROR] ${par.nombre}/${sku}: variante ${vp.variantId} no esta activada en la location del par, no se resuelve`
+      );
+    }
+    return { resultado: "error" };
+  }
+
+  // Se clasifican TODAS las variantes antes de escribir nada: una (c) bloquea
+  // el cierre del pendiente pero no le impide a otra variante de la MISMA
+  // entrada, ya en (b), terminar de escribirse en esta corrida.
+  const aEscribir = [];
+  let yaEstaban = 0;
+  let fallidasClasificacion = 0;
+  for (const vp of variantesPendiente) {
+    const actual = actualesPorId.get(vp.inventoryItemId);
+    const available = actual.available;
+    if (available === nuevoValor) {
+      yaEstaban++; // (a)
+    } else if (available === vp.desde) {
+      aEscribir.push(vp); // (b)
+    } else {
+      // (c): R-11.
+      console.error(
+        `  [ERROR] ${par.nombre}/${sku}: variante ${vp.variantId} cambio durante un pendiente universal (desde=${vp.desde}, actual=${available}, pendiente=${nuevoValor}) -> no se escribe`
+      );
+      fallidasClasificacion++;
+    }
+  }
+  const hayCasoC = fallidasClasificacion > 0;
+  const n = variantesPendiente.length;
+
+  if (dryRun) {
+    if (hayCasoC) return { resultado: "error" };
+    if (aEscribir.length === 0) return { resultado: "sin_cambios" };
+    console.log(
+      `  [UNIVERSAL] ${par.nombre}/${sku}: ${n} variantes -> ${nuevoValor} (no se escribe, DRY_RUN=true) [reintento]`
+    );
+    return { resultado: "dry" };
+  }
+
+  let escritas = 0;
+  let fallidasEscritura = 0;
+  for (const vp of aEscribir) {
+    try {
+      await deps.setearStock(vp.inventoryItemId, nuevoValor, vp.desde, par.locationId);
+      escritas++;
+    } catch (err) {
+      console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al escribir en Shopify -> ${err.message}`);
+      fallidasEscritura++;
+    }
+  }
+  const fallidas = fallidasClasificacion + fallidasEscritura;
+  const fallo = fallidas > 0;
+  if (fallo) {
+    console.log(
+      `  [UNIVERSAL] ${par.nombre}/${sku}: ${n} variantes -> ${nuevoValor} PENDIENTE (escritas=${escritas}, ya_estaban=${yaEstaban}, fallidas=${fallidas}) [reintento]`
+    );
+    return { resultado: "error" };
+  }
+  console.log(`  [UNIVERSAL] ${par.nombre}/${sku}: ${n} variantes -> ${nuevoValor} (escritas=${escritas}, ya_estaban=${yaEstaban}) [reintento]`);
+
+  // Todas satisfechas: cierra el pendiente con el contabiliumObjetivo
+  // persistido (R-11/R-12), nunca con el valor de Contabilium de esta corrida.
+  const destino = inventoryItemIdMasChico(variantesActuales);
+  destinos[sku] = destino;
+  snapshotNuevo[sku] = contabiliumObjetivo;
+  contabiliumNuevo.set(sku, contabiliumObjetivo);
+  const previa = deps.cargarLibretaCompleta(ruta, par);
+  deps.confirmarSkuUniversal({
+    sku,
+    snap: snapshotNuevo,
+    contabilium: contabiliumNuevo,
+    contabilidad: {
+      corte: contab.corte,
+      consumos: contab.consumos,
+      resembradoEn: contab.resembradoEn,
+      resembradoPor: contab.resembradoPor,
+      destinos,
+      pendientes: previa.pendientes,
+      escritos: previa.escritos,
+    },
+    escrito: nuevoValor,
+    destino,
+    ruta,
+  });
+
+  return { resultado: aEscribir.length > 0 ? "actualizado" : "sin_cambios", universalConfirmado: true };
+}
+
+// -----------------------------------------------------------------------------
+// procesarSkuUniversalAbsoluto — compuerta ESCRITURA_ABSOLUTA sobre un SKU de
+// la lista curada (T12: R-16, R-17, R-18). Tiene prioridad sobre el journal
+// automatico: nunca mira la entrada pendiente existente, la descarta y la
+// reemplaza con una propia marcada "requiere compuerta" antes de la primera
+// mutacion. Escribe el MISMO absoluto (Math.round de Contabilium, sin
+// credito) en las N variantes. Si las N quedan confirmadas, en una sola
+// persistencia: borra el pendiente, fija `escrito`, avanza baseline/destino,
+// consume las lineas de credito YA conocidas con motivo "absoluto" y anota
+// resembradoPor/resembradoEn, una vez por SKU (igual mecanismo que ya existe
+// hoy para la compuerta sobre un SKU no universal).
+// -----------------------------------------------------------------------------
+async function procesarSkuUniversalAbsoluto({
+  deps,
+  par,
+  sku,
+  cantidad,
+  contab,
+  lineasSku,
+  destinos,
+  snapshotNuevo,
+  contabiliumNuevo,
+  ruta,
+  tInicioLectura,
+  tIso,
+  dryRun,
+}) {
+  let variantes;
+  try {
+    variantes = await deps.resolverSkuUniversal(sku, par.locationId);
+  } catch (err) {
+    console.error(`  [ERROR] ${par.nombre}/${sku}: ${err.message}`);
+    return { resultado: "error" };
+  }
+
+  const disponibles = variantes.map((v) => v.available);
+  const activadas = disponibles.filter((a) => a !== null && a !== undefined);
+  if (activadas.length === 0) {
+    // R-18 caso (a): benigno bajo la compuerta, igual que en el camino automatico.
+    return { resultado: "no_activado" };
+  }
+  if (activadas.length !== disponibles.length) {
+    // R-18 caso (b): catalogo inconsistente -> error, ninguna mutacion.
+    for (const v of variantes) {
+      if (v.available === null || v.available === undefined) {
+        console.error(
+          `  [ERROR] ${par.nombre}/${sku}: variante ${v.variantId} no esta activada en la location del par, no se resuelve`
+        );
+      }
+    }
+    return { resultado: "error" };
+  }
+
+  const nuevoValor = Math.round(cantidad);
+  const difieren = variantes.filter((v) => v.available !== nuevoValor);
+
+  if (difieren.length > 0 && dryRun) {
+    console.log(`  [UNIVERSAL] ${par.nombre}/${sku}: ${variantes.length} variantes -> ${nuevoValor} (no se escribe, DRY_RUN=true)`);
+    return { resultado: "dry" };
+  }
+
+  if (difieren.length > 0) {
+    // R-16: prioridad sobre el journal automatico. Se descarta cualquier
+    // entrada pendiente existente (marcada o no) y se persiste la propia,
+    // marcada "requiere compuerta", ANTES de la primera mutacion (R-10/R-17).
+    const entradaPendiente = {
+      nuevoValor,
+      contabiliumObjetivo: cantidad,
+      variantes: variantes.map((v) => ({ variantId: v.variantId, inventoryItemId: v.inventoryItemId, desde: v.available })),
+      requiereCompuerta: true,
+    };
+    try {
+      deps.persistirPendienteUniversal(sku, entradaPendiente, ruta);
+    } catch {
+      console.error(`  [ERROR] ${par.nombre}/${sku}: no se pudo persistir la entrada pendiente, no se escribe`);
+      return { resultado: "error" };
+    }
+
+    const yaEstaban = variantes.length - difieren.length;
+    let escritas = 0;
+    let fallidas = 0;
+    for (const v of difieren) {
+      try {
+        await deps.setearStock(v.inventoryItemId, nuevoValor, v.available, par.locationId);
+        escritas++;
+      } catch (err) {
+        console.error(`  [ERROR] ${par.nombre}/${sku}: fallo al escribir en Shopify -> ${err.message}`);
+        fallidas++;
+      }
+    }
+    if (fallidas > 0) {
+      console.log(
+        `  [UNIVERSAL] ${par.nombre}/${sku}: ${variantes.length} variantes -> ${nuevoValor} PENDIENTE (escritas=${escritas}, ya_estaban=${yaEstaban}, fallidas=${fallidas})`
+      );
+      return { resultado: "error" };
+    }
+    console.log(`  [UNIVERSAL] ${par.nombre}/${sku}: ${variantes.length} variantes -> ${nuevoValor} (escritas=${escritas}, ya_estaban=${yaEstaban})`);
+  }
+
+  // Resuelto: las N variantes quedan (o ya estaban) en el absoluto. En una
+  // misma persistencia: cierre del pendiente, escrito, baseline/destino,
+  // consumo del credito conocido y resiembra anotada (R-16).
+  if (!dryRun) {
+    const destino = inventoryItemIdMasChico(variantes);
+    destinos[sku] = destino;
+
+    contab.resembradoEn[sku] = tIso;
+    contab.resembradoPor[sku] = "absoluto";
+    for (const l of lineasSku) {
+      const clave = claveConsumo(l.comprobanteId, l.sku);
+      if (Object.prototype.hasOwnProperty.call(contab.consumos, clave)) continue;
+      if (new Date(l.referencia).getTime() < tInicioLectura.getTime()) {
+        contab.consumos[clave] = { cantidad: l.cantidad, motivo: "absoluto", referencia: l.referencia, en: tIso };
+      }
+    }
+
+    snapshotNuevo[sku] = cantidad;
+    contabiliumNuevo.set(sku, cantidad);
+    const previa = deps.cargarLibretaCompleta(ruta, par);
+    deps.confirmarSkuUniversal({
+      sku,
+      snap: snapshotNuevo,
+      contabilium: contabiliumNuevo,
+      contabilidad: {
+        corte: contab.corte,
+        consumos: contab.consumos,
+        resembradoEn: contab.resembradoEn,
+        resembradoPor: contab.resembradoPor,
+        destinos,
+        pendientes: previa.pendientes,
+        escritos: previa.escritos,
+      },
+      escrito: nuevoValor,
+      destino,
+      ruta,
+    });
+  }
+
+  return {
+    resultado: difieren.length > 0 ? "actualizado" : "sin_cambios",
+    universalConfirmado: !dryRun,
+  };
+}
+
 export async function ejecutarPar(par, deps = DEPS_REALES, opciones = {}) {
   return ejecutarParEnCorrida(par, deps, opciones, null);
 }
@@ -941,7 +1680,7 @@ async function ejecutarParEnCorrida(
   // proposito. Varios tests (patron conDirTemporal) borran el directorio
   // temporal en un `finally` que puede correr apenas esta funcion cede el control.
   const ruta = deps.rutaSnapshotPara(par.stateKey);
-  const libreta = deps.cargarLibretaCompleta(ruta);
+  const libreta = deps.cargarLibretaCompleta(ruta, par);
   const registro = registroDe(ctx);
   const sesion = sesionDe(ctx);
 
@@ -1049,6 +1788,7 @@ async function ejecutarParEnCorrida(
     saltado: 0,
   };
   let duplicados = 0;
+  let universales = 0;
   let cacheInvalidada = 0;
   let causaVentaShopify = 0;
   let causaDesconocida = 0;
@@ -1084,10 +1824,74 @@ async function ejecutarParEnCorrida(
         ? { credito: 0, claves: [] }
         : creditoAcreditable({ lineas: lineasSku, consumos: contab.consumos, tInicioLectura, margenMs: margenAcreditacionMs });
 
-    if (!alcanzaAbsoluta && !full && snapshotPrevio[sku] === cantidad && credito.credito === 0) {
+    // R-14: el atajo del incremental no aplica a los 7 SKUs curados (bypass),
+    // en corridas incrementales y en --full. La compuerta manual (alcanzaAbsoluta)
+    // sobre un curado es T12: fuera de alcance de T06, cae en el camino viejo.
+    if (!alcanzaAbsoluta && !full && snapshotPrevio[sku] === cantidad && credito.credito === 0 && !esSkuUniversal(sku)) {
       // CA-1: el atajo incremental es la MISMA conclusion que "sin cambios".
       contadores.saltado++;
       contadores.sin_cambios++;
+      continue;
+    }
+
+    if (esSkuUniversal(sku) && alcanzaAbsoluta) {
+      const resuelto = await procesarSkuUniversalAbsoluto({
+        deps,
+        par,
+        sku,
+        cantidad,
+        contab,
+        lineasSku,
+        destinos,
+        snapshotNuevo,
+        contabiliumNuevo,
+        ruta,
+        tInicioLectura,
+        tIso,
+        dryRun: esDry(),
+      });
+      contadores[resuelto.resultado] = (contadores[resuelto.resultado] ?? 0) + 1;
+      if (resuelto.universalConfirmado) universales++;
+      if (resuelto.resultado === "actualizado" || resuelto.resultado === "sin_cambios" || resuelto.resultado === "dry") {
+        compuertaSkus.aplicados.push(sku);
+      } else if (resuelto.resultado === "no_activado") {
+        compuertaSkus.noActivados.push(sku);
+      }
+      procesados++;
+      if (!esDry() && procesados % checkpointCada === 0) {
+        deps.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo, contabilidadParaGuardar());
+      }
+      continue;
+    }
+
+    if (esSkuUniversal(sku) && !alcanzaAbsoluta) {
+      const resuelto = await procesarSkuUniversal({
+        deps,
+        par,
+        sku,
+        cantidad,
+        baseline,
+        libreta,
+        contab,
+        lineasSku,
+        credito,
+        destinos,
+        snapshotNuevo,
+        contabiliumNuevo,
+        ruta,
+        tInicioLectura,
+        tIso,
+        dryRun: esDry(),
+      });
+      contadores[resuelto.resultado] = (contadores[resuelto.resultado] ?? 0) + 1;
+      if (resuelto.universalConfirmado) universales++;
+      if ((resuelto.resultado === "actualizado" || resuelto.resultado === "sin_cambios") && resuelto.credito) {
+        causaVentaShopify += resuelto.credito;
+      }
+      procesados++;
+      if (!esDry() && procesados % checkpointCada === 0) {
+        deps.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo, contabilidadParaGuardar());
+      }
       continue;
     }
 
@@ -1237,6 +2041,12 @@ async function ejecutarParEnCorrida(
 
   if (!esDry()) deps.guardarSnapshot(snapshotNuevo, ruta, contabiliumNuevo, contabilidadParaGuardar());
 
+  // R-8: pendientes universales que siguen en la libreta al terminar la
+  // corrida, leidos frescos de disco (cada SKU universal persiste su propio
+  // pendiente/confirmacion directo, fuera del snapshot periodico de arriba).
+  const libretaAlFinal = deps.cargarLibretaCompleta(ruta, par);
+  const universalesPendientes = Object.keys(libretaAlFinal.pendientes ?? {}).length;
+
   // Unidades del par podadas de la cache sin haberse consumido (30 dias).
   let creditosVencidos = 0;
   const vistas = new Set();
@@ -1266,6 +2076,8 @@ async function ejecutarParEnCorrida(
     compuerta_pedidos: compuertaSkus.pedidos.length,
     compuerta_aplicados: compuertaSkus.aplicados.length,
     duplicados,
+    universales,
+    universales_pendientes: universalesPendientes,
     cache_invalidada: cacheInvalidada,
   };
 
