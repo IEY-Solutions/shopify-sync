@@ -6,3 +6,4 @@
 - arn juzgar trunca diffs grandes (ARN-W072): en features grandes, doble chequeo con un juez opus como agente antes de arn cerrar.
 - Una caché de mapeo (sku-map) sin re-verificación viola la invariante 3 en silencio: toda caché que decida dónde se escribe tiene que verificarse contra la fuente en cada escritura.
 - Antes de afirmar que el sync escribió o no un SKU, mirar el historial de ajustes de Shopify (Creado por): distingue app, persona e importación y evita hipótesis falsas.
+- Para features nivel 2+: antes de delegar implementación, descomponer en tareas T# con lista de archivos permitida (el implementador frena sin eso) y correr arn diseno exigir/presentar/aprobar para las rutas src/.github (gate ARN-E177 aparte del contrato congelado).
